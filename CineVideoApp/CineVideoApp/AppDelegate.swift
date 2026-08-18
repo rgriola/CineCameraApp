@@ -16,7 +16,7 @@ enum OrientationLock {
     private(set) static var isLocked = false
     private(set) static var lockedMask: UIInterfaceOrientationMask = .portrait
 
-    /// Freezes the app to whichever orientation (portrait or landscape left)
+    /// Freezes the app to whichever orientation (portrait or landscape right)
     /// the device currently reports. Called when recording starts.
     static func lock() {
         let scene = UIApplication.shared
@@ -25,7 +25,7 @@ enum OrientationLock {
             .first
         let current = scene.map(currentInterfaceOrientation) ?? .portrait
 
-        lockedMask = current.isLandscape ? .landscapeLeft : .portrait
+        lockedMask = current.isLandscape ? .landscapeRight : .portrait
         isLocked = true
         Logger.orientation.notice("Orientation locked to \(String(describing: lockedMask), privacy: .public).")
         requestUpdate()
@@ -41,7 +41,7 @@ enum OrientationLock {
     }
 
     /// Releases the lock, allowing the device to rotate freely again between
-    /// Portrait and Landscape Left. Called when recording stops.
+    /// Portrait and Landscape Right. Called when recording stops.
     static func unlock() {
         isLocked = false
         Logger.orientation.notice("Orientation unlocked.")
@@ -59,7 +59,7 @@ enum OrientationLock {
 }
 
 /// Minimal delegate whose sole job is to enforce the app-wide orientation
-/// restriction: Portrait + Landscape Left only, further narrowed to whichever
+/// restriction: Portrait + Landscape Right only, further narrowed to whichever
 /// single orientation is locked while recording. It also hands UIKit a
 /// dedicated scene configuration for connected external displays, so a
 /// plugged-in monitor gets our own HDMI mirror content (via
@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
-        OrientationLock.isLocked ? OrientationLock.lockedMask : [.portrait, .landscapeLeft]
+        OrientationLock.isLocked ? OrientationLock.lockedMask : [.portrait, .landscapeRight]
     }
 
     /// Without this, UIKit still creates a scene for a connected external

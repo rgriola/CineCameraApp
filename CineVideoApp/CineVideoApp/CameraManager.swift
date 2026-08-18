@@ -151,9 +151,15 @@ final class CameraManager: NSObject {
     var onOrientationLockChange: (@MainActor (Bool) -> Void)?
 
     /// The active video device, exposed so `CameraPreview` can build its own
-    /// preview-specific `RotationCoordinator`. Only meaningful once the
-    /// session has finished configuring (mirrors how `session` is exposed).
-    var videoDevice: AVCaptureDevice? { cs.videoDevice }
+    /// preview-specific `RotationCoordinator`. A genuine stored, macro-tracked
+    /// property (not a computed pass-through into `cs.videoDevice`) — SwiftUI's
+    /// Observation system only instruments stored properties the @Observable
+    /// macro directly generates; a computed property reading into `cs` (a
+    /// plain, non-Observable class) would never notify SwiftUI when its value
+    /// changed, so `CameraPreview.updateUIView` would never be re-invoked once
+    /// the session finished configuring. This must be assigned explicitly on
+    /// the main actor alongside `isSessionRunning` (see `setupSession`).
+    private(set) var videoDevice: AVCaptureDevice?
 
     var isAuthorized: Bool {
         cameraAuthStatus == .authorized &&
@@ -304,6 +310,7 @@ final class CameraManager: NSObject {
         guard !cs.isConfigured else {
             if !cs.session.isRunning { cs.session.startRunning() }
             DispatchQueue.main.async { [weak self] in
+                self?.videoDevice = cs.videoDevice
                 self?.isSessionRunning = cs.session.isRunning
             }
             return
@@ -371,6 +378,7 @@ final class CameraManager: NSObject {
         setupCaptureRotationCoordinator(cs: cs, device: videoDevice)
 
         DispatchQueue.main.async { [weak self] in
+            self?.videoDevice = cs.videoDevice
             self?.isSessionRunning = cs.session.isRunning
         }
     }

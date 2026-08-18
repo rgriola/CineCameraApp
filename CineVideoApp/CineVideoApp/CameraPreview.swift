@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import OSLog
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
@@ -23,9 +24,13 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
-        // The video device isn't known until the session finishes configuring
-        // (after the permission cascade completes), so attach lazily here.
-        if context.coordinator.rotationCoordinator == nil, let device = cameraManager.videoDevice {
+        // Re-attach whenever the video device becomes available for the
+        // first time, OR if SwiftUI ever swaps in a new PreviewUIView/layer
+        // instance underneath us (e.g. across certain relayouts triggered by
+        // rotation) — otherwise the Coordinator would keep silently updating
+        // a stale, now-invisible layer's connection while the visible one
+        // never rotates. `isAttached(to:)` logs when this recovery kicks in.
+        if let device = cameraManager.videoDevice, !context.coordinator.isAttached(to: uiView) {
             context.coordinator.attach(to: uiView, device: device)
         }
         context.coordinator.updateLockState(isRecording: cameraManager.isRecording)
@@ -54,22 +59,38 @@ struct CameraPreview: UIViewRepresentable {
         }
 
         func attach(to view: PreviewUIView, device: AVCaptureDevice) {
-            guard let previewLayer = view.previewLayer else { return }
+            guard let previewLayer = view.previewLayer else {
+                Logger.orientation.warning("Preview attach skipped: view has no previewLayer yet.")
+                return
+            }
+            if self.previewLayer != nil, self.previewLayer !== previewLayer {
+                Logger.orientation.notice("Preview layer instance changed — reattaching RotationCoordinator.")
+            }
             self.previewLayer = previewLayer
             self.device = device
 
             let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
             rotationCoordinator = coordinator
+            Logger.orientation.notice("Preview RotationCoordinator attached for \(device.loggingDescription, privacy: .public).")
             apply(coordinator.videoRotationAngleForHorizonLevelPreview)
 
             observation = coordinator.observe(
                 \.videoRotationAngleForHorizonLevelPreview, options: [.new]
             ) { [weak self] _, change in
                 guard let newAngle = change.newValue else { return }
+                Logger.orientation.debug("Preview RotationCoordinator KVO fired: raw \(newAngle, privacy: .public)°")
                 Task { @MainActor [weak self] in
                     self?.apply(newAngle)
                 }
             }
+        }
+
+        /// True once `attach(to:device:)` has bound this coordinator to
+        /// `view`'s *current* preview layer instance. Used both to gate the
+        /// first-time attach and to detect (and recover from) SwiftUI
+        /// swapping in a new `PreviewUIView`/layer across relayouts.
+        func isAttached(to view: PreviewUIView) -> Bool {
+            rotationCoordinator != nil && previewLayer != nil && previewLayer === view.previewLayer
         }
 
         /// Called from `updateUIView` on every render so the preview freezes
@@ -84,7 +105,18 @@ struct CameraPreview: UIViewRepresentable {
         }
 
         private func apply(_ angle: CGFloat) {
-            guard !isLocked, let previewLayer, let connection = previewLayer.connection else { return }
+            guard !isLocked else {
+                Logger.orientation.debug("Preview apply skipped: orientation locked (recording).")
+                return
+            }
+            guard let previewLayer else {
+                Logger.orientation.warning("Preview apply skipped: previewLayer is nil (deallocated).")
+                return
+            }
+            guard let connection = previewLayer.connection else {
+                Logger.orientation.warning("Preview apply skipped: previewLayer.connection is nil.")
+                return
+            }
             connection.applyRotationAngle(angle, source: "Preview", device: device)
         }
     }
