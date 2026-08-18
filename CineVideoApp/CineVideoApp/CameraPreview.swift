@@ -16,19 +16,14 @@ struct CameraPreview: UIViewRepresentable {
         let view: CameraPreview.PreviewUIView = PreviewUIView()
         view.backgroundColor = .black
         view.setupPreviewLayer(session: session)
-        if let device = cameraManager.videoDevice {
-            context.coordinator.attach(to: view, device: device)
-        }
+        context.coordinator.attach(to: view)
         return view
     }
 
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
-        // The video device isn't known until the session finishes configuring
-        // (after the permission cascade completes), so attach lazily here.
-        if context.coordinator.rotationCoordinator == nil, let device = cameraManager.videoDevice {
-            context.coordinator.attach(to: uiView, device: device)
-        }
-        context.coordinator.updateLockState(isRecording: cameraManager.isRecording)
+        // Re-applies on every render in case the connection resets (e.g.
+        // after the session reconfigures); cheap no-op once already set.
+        context.coordinator.attach(to: uiView)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -36,56 +31,21 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     // -------------------------------------------------------------------
-    // Coordinator owns a preview-specific RotationCoordinator so the
-    // on-device preview always matches how the device is held — except
-    // while recording, when CameraManager.isRecording freezes it in place.
+    // TEMPORARY (branch fix/horizontal-preview): hardcodes the preview to
+    // Landscape Right instead of tracking live device rotation — see
+    // RotationCorrection.swift for why.
     // -------------------------------------------------------------------
     @MainActor
     final class Coordinator {
         private weak var cameraManager: CameraManager?
-        private(set) var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
-        private var observation: NSKeyValueObservation?
-        private weak var previewLayer: AVCaptureVideoPreviewLayer?
-        private weak var device: AVCaptureDevice?
-        private var isLocked = false
 
         init(cameraManager: CameraManager) {
             self.cameraManager = cameraManager
         }
 
-        func attach(to view: PreviewUIView, device: AVCaptureDevice) {
-            guard let previewLayer = view.previewLayer else { return }
-            self.previewLayer = previewLayer
-            self.device = device
-
-            let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
-            rotationCoordinator = coordinator
-            apply(coordinator.videoRotationAngleForHorizonLevelPreview)
-
-            observation = coordinator.observe(
-                \.videoRotationAngleForHorizonLevelPreview, options: [.new]
-            ) { [weak self] _, change in
-                guard let newAngle = change.newValue else { return }
-                Task { @MainActor [weak self] in
-                    self?.apply(newAngle)
-                }
-            }
-        }
-
-        /// Called from `updateUIView` on every render so the preview freezes
-        /// the instant recording starts, and immediately catches up to the
-        /// device's current angle the instant recording stops.
-        func updateLockState(isRecording: Bool) {
-            let wasLocked = isLocked
-            isLocked = isRecording
-            if wasLocked, !isLocked, let coordinator = rotationCoordinator {
-                apply(coordinator.videoRotationAngleForHorizonLevelPreview)
-            }
-        }
-
-        private func apply(_ angle: CGFloat) {
-            guard !isLocked, let previewLayer, let connection = previewLayer.connection else { return }
-            connection.applyRotationAngle(angle, source: "Preview", device: device)
+        func attach(to view: PreviewUIView) {
+            guard let connection = view.previewLayer?.connection else { return }
+            connection.applyHardcodedLandscapeRight(source: "Preview", device: cameraManager?.videoDevice)
         }
     }
 

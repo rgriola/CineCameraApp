@@ -10,11 +10,11 @@ import UIKit
 import OSLog
 
 /// Mirrors the live camera session to an external display connected via a
-/// USB‑C/Lightning → HDMI adapter, matching whatever orientation the
-/// on-device preview and recording are currently using — the same
-/// `AVCaptureDevice.RotationCoordinator`-driven approach `CameraPreview` uses,
-/// so the HDMI feed always shows exactly "Preview + Recording" as originally
-/// specified, and freezes in lockstep with them once recording starts.
+/// USB‑C/Lightning → HDMI adapter.
+///
+/// TEMPORARY (branch fix/horizontal-preview): hardcoded to Landscape Right,
+/// same as `CameraPreview` and the recording connection — see
+/// RotationCorrection.swift for why.
 ///
 /// Driven entirely by `ExternalDisplaySceneDelegate`'s UIKit-invoked lifecycle
 /// callbacks. UIKit instantiates that delegate itself (per the scene
@@ -33,11 +33,6 @@ final class ExternalDisplayController {
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var hostView: MirrorPreviewView?
     private let audioMirror = AudioMirror()
-
-    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
-    private var rotationObservation: NSKeyValueObservation?
-    private weak var rotationDevice: AVCaptureDevice?
-    private var isOrientationLocked = false
 
     /// Builds the window UIKit should use for the external display's scene.
     /// Called from `ExternalDisplaySceneDelegate.scene(_:willConnectTo:options:)`
@@ -61,7 +56,7 @@ final class ExternalDisplayController {
         previewLayer = layer
         hostView = view
 
-        attachRotationCoordinator(to: layer)
+        applyHardcodedOrientation(to: layer)
         enableAudioMirroring()
         Logger.externalDisplay.notice("HDMI mirror window attached.")
         return window
@@ -70,66 +65,26 @@ final class ExternalDisplayController {
     /// Tears down the mirror. Called from `ExternalDisplaySceneDelegate.sceneDidDisconnect(_:)`.
     func teardown() {
         disableAudioMirroring()
-        rotationObservation = nil
-        rotationCoordinator = nil
-        rotationDevice = nil
         previewLayer = nil
         hostView = nil
         Logger.externalDisplay.notice("HDMI mirror window torn down.")
     }
 
-    // MARK: - Rotation (mirrors CameraPreview's live device-orientation tracking)
-
-    private func attachRotationCoordinator(to layer: AVCaptureVideoPreviewLayer) {
-        guard let device = CameraManager.shared.videoDevice else {
-            // Edge case: external display connected before the camera
-            // session finished configuring (e.g. permissions still pending).
-            // Retry briefly rather than leaving the mirror at a fixed angle.
-            Logger.externalDisplay.notice("No video device yet; will retry rotation setup shortly.")
+    /// Edge case: external display connected before the camera session
+    /// finished configuring (e.g. permissions still pending). Retry briefly
+    /// rather than leaving the mirror at whatever default orientation the
+    /// connection happened to start with.
+    private func applyHardcodedOrientation(to layer: AVCaptureVideoPreviewLayer) {
+        guard let connection = layer.connection else {
+            Logger.externalDisplay.notice("No connection yet; will retry orientation setup shortly.")
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, self.previewLayer === layer else { return }
-                self.attachRotationCoordinator(to: layer)
+                self.applyHardcodedOrientation(to: layer)
             }
             return
         }
-
-        // Freeze/unfreeze in lockstep with the on-device preview and
-        // recording, exactly as the original spec's safety net requires.
-        CameraManager.shared.onOrientationLockChange = { [weak self] locked in
-            self?.updateLockState(isRecording: locked)
-        }
-        isOrientationLocked = CameraManager.shared.isRecording
-        rotationDevice = device
-
-        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
-        rotationCoordinator = coordinator
-        apply(coordinator.videoRotationAngleForHorizonLevelPreview, to: layer)
-
-        rotationObservation = coordinator.observe(
-            \.videoRotationAngleForHorizonLevelPreview, options: [.new]
-        ) { [weak self] _, change in
-            guard let newAngle = change.newValue else { return }
-            Task { @MainActor [weak self] in
-                self?.apply(newAngle)
-            }
-        }
-    }
-
-    private func updateLockState(isRecording: Bool) {
-        let wasLocked = isOrientationLocked
-        isOrientationLocked = isRecording
-        if wasLocked, !isRecording, let coordinator = rotationCoordinator {
-            apply(coordinator.videoRotationAngleForHorizonLevelPreview)
-        }
-    }
-
-    private func apply(_ angle: CGFloat, to layer: AVCaptureVideoPreviewLayer? = nil) {
-        guard !isOrientationLocked,
-              let layer = layer ?? previewLayer,
-              let connection = layer.connection
-        else { return }
-        connection.applyRotationAngle(angle, source: "HDMI", device: rotationDevice)
+        connection.applyHardcodedLandscapeRight(source: "HDMI", device: CameraManager.shared.videoDevice)
     }
 
     // MARK: - Audio follows video
