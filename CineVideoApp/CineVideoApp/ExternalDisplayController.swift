@@ -125,10 +125,18 @@ final class ExternalDisplayController {
     }
 
     private func apply(_ angle: CGFloat, to layer: AVCaptureVideoPreviewLayer? = nil) {
-        guard !isOrientationLocked,
-              let layer = layer ?? previewLayer,
-              let connection = layer.connection
-        else { return }
+        guard !isOrientationLocked else {
+            Logger.externalDisplay.debug("HDMI apply skipped: orientation locked (recording).")
+            return
+        }
+        guard let layer = layer ?? previewLayer else {
+            Logger.externalDisplay.warning("HDMI apply skipped: no preview layer.")
+            return
+        }
+        guard let connection = layer.connection else {
+            Logger.externalDisplay.warning("HDMI apply skipped: previewLayer.connection is nil.")
+            return
+        }
         connection.applyRotationAngle(angle, source: "HDMI", device: rotationDevice)
     }
 

@@ -61,6 +61,13 @@ extension AVCaptureConnection {
     nonisolated func applyRotationAngle(_ rawAngle: CGFloat, source: String, device: AVCaptureDevice?) -> Bool {
         let corrected = rawAngle.landscapeCorrected
         let deviceInfo = device?.loggingDescription ?? "unknown device"
+        let connectionID = ObjectIdentifier(self)
+
+        // Unconditional debug-level log on every call — including no-op
+        // calls where the angle didn't change — so Console.app shows the
+        // full call history for diagnosing "preview didn't rotate" issues,
+        // not just the moments a value actually changed.
+        Logger.orientation.debug("\(source, privacy: .public) [\(deviceInfo, privacy: .public)] connection=\(String(describing: connectionID), privacy: .public): apply raw \(rawAngle, privacy: .public)° -> corrected \(corrected, privacy: .public)° (current \(self.videoRotationAngle, privacy: .public)°)")
 
         guard isVideoRotationAngleSupported(corrected) else {
             Logger.orientation.warning("\(source, privacy: .public) [\(deviceInfo, privacy: .public)]: angle \(corrected, privacy: .public)\u{00B0} (raw \(rawAngle, privacy: .public)\u{00B0}) is unsupported; leaving unchanged.")
@@ -71,7 +78,7 @@ extension AVCaptureConnection {
         videoRotationAngle = corrected
 
         if didChange {
-            Logger.orientation.notice("\(source, privacy: .public) [\(deviceInfo, privacy: .public)]: rotation angle set to \(corrected, privacy: .public)\u{00B0} (raw \(rawAngle, privacy: .public)\u{00B0} from RotationCoordinator).")
+            Logger.orientation.notice("\(source, privacy: .public) [\(deviceInfo, privacy: .public)]: rotation angle set to \(corrected, privacy: .public)\u{00B0} (raw \(rawAngle, privacy: .public)\u{00B0} from RotationCoordinator). Readback: \(self.videoRotationAngle, privacy: .public)°")
         }
         return didChange
     }
