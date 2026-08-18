@@ -24,13 +24,16 @@ final class ExternalDisplaySceneDelegate: NSObject, UIWindowSceneDelegate {
         willConnectTo session: UISceneSession,
         options connectionOptions: UIScene.ConnectionOptions
     ) {
-        guard let windowScene = scene as? UIWindowScene else { return }
-        Logger.externalDisplay.notice("External display scene connecting.")
+        guard let windowScene = scene as? UIWindowScene else {
+            Logger.externalDisplay.error("DIAG ExternalDisplaySceneDelegate.scene(_:willConnectTo:) called but scene is not a UIWindowScene.")
+            return
+        }
+        Logger.externalDisplay.error("DIAG ExternalDisplaySceneDelegate.scene(_:willConnectTo:) called — building HDMI window.")
         window = ExternalDisplayController.shared.makeWindow(for: windowScene)
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
-        Logger.externalDisplay.notice("External display scene disconnected.")
+        Logger.externalDisplay.error("DIAG ExternalDisplaySceneDelegate.sceneDidDisconnect called.")
         ExternalDisplayController.shared.teardown()
         window = nil
     }

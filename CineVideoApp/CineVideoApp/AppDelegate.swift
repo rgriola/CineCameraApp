@@ -82,14 +82,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         configurationForConnecting connectingSceneSession: UISceneSession,
         options: UIScene.ConnectionOptions
     ) -> UISceneConfiguration {
+        // TEMPORARY DIAGNOSTIC: .error level, unconditional — confirms this
+        // delegate method is even being invoked at all when the external
+        // display connects, and what role/name UIKit is actually offering
+        // for that connecting session (role is the deciding factor for
+        // whether our custom delegate gets attached below).
+        Logger.externalDisplay.error("DIAG configurationForConnecting called. role=\(connectingSceneSession.role.rawValue, privacy: .public) name=\(connectingSceneSession.configuration.name ?? "nil", privacy: .public)")
+
         let configuration = UISceneConfiguration(
             name: connectingSceneSession.configuration.name,
             sessionRole: connectingSceneSession.role
         )
 
         if connectingSceneSession.role == .windowExternalDisplayNonInteractive {
-            Logger.externalDisplay.notice("Providing custom scene configuration for external display.")
+            Logger.externalDisplay.error("DIAG Role matched windowExternalDisplayNonInteractive — assigning ExternalDisplaySceneDelegate.")
             configuration.delegateClass = ExternalDisplaySceneDelegate.self
+        } else {
+            Logger.externalDisplay.error("DIAG Role did NOT match windowExternalDisplayNonInteractive — using default configuration.")
         }
 
         return configuration
