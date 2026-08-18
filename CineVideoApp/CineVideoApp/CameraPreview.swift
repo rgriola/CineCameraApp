@@ -17,10 +17,6 @@ struct CameraPreview: UIViewRepresentable {
         let view: CameraPreview.PreviewUIView = PreviewUIView()
         view.backgroundColor = .black
         view.setupPreviewLayer(session: session)
-        // TEMPORARY: bumped to .error level (impossible for Console/Xcode's
-        // default log-level filters to hide) purely for this diagnostic
-        // pass — confirms whether makeUIView/attach ever run at all.
-        Logger.orientation.error("DIAG makeUIView called. videoDevice=\(cameraManager.videoDevice != nil, privacy: .public)")
         if let device = cameraManager.videoDevice {
             context.coordinator.attach(to: view, device: device)
         }
@@ -28,11 +24,6 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
-        // TEMPORARY: .error level — confirms whether updateUIView is even
-        // being invoked again after the initial makeUIView call, and what
-        // state it sees each time, without any risk of being log-filtered.
-        Logger.orientation.error("DIAG updateUIView called. videoDevice=\(cameraManager.videoDevice != nil, privacy: .public) isAttached=\(context.coordinator.isAttached(to: uiView), privacy: .public)")
-
         // Re-attach whenever the video device becomes available for the
         // first time, OR if SwiftUI ever swaps in a new PreviewUIView/layer
         // instance underneath us (e.g. across certain relayouts triggered by
@@ -69,25 +60,25 @@ struct CameraPreview: UIViewRepresentable {
 
         func attach(to view: PreviewUIView, device: AVCaptureDevice) {
             guard let previewLayer = view.previewLayer else {
-                Logger.orientation.error("DIAG Preview attach skipped: view has no previewLayer yet.")
+                Logger.orientation.warning("Preview attach skipped: view has no previewLayer yet.")
                 return
             }
             if self.previewLayer != nil, self.previewLayer !== previewLayer {
-                Logger.orientation.error("DIAG Preview layer instance changed — reattaching RotationCoordinator.")
+                Logger.orientation.notice("Preview layer instance changed — reattaching RotationCoordinator.")
             }
             self.previewLayer = previewLayer
             self.device = device
 
             let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
             rotationCoordinator = coordinator
-            Logger.orientation.error("DIAG Preview RotationCoordinator attached for \(device.loggingDescription, privacy: .public).")
+            Logger.orientation.notice("Preview RotationCoordinator attached for \(device.loggingDescription, privacy: .public).")
             apply(coordinator.videoRotationAngleForHorizonLevelPreview)
 
             observation = coordinator.observe(
                 \.videoRotationAngleForHorizonLevelPreview, options: [.new]
             ) { [weak self] _, change in
                 guard let newAngle = change.newValue else { return }
-                Logger.orientation.error("DIAG Preview RotationCoordinator KVO fired: raw \(newAngle, privacy: .public)°")
+                Logger.orientation.debug("Preview RotationCoordinator KVO fired: raw \(newAngle, privacy: .public)°")
                 Task { @MainActor [weak self] in
                     self?.apply(newAngle)
                 }

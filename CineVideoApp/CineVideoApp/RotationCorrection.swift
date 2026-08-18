@@ -9,14 +9,16 @@ import AVFoundation
 import CoreGraphics
 import OSLog
 
-/// TEMPORARY DIAGNOSTIC STATE: no correction is applied — the raw angle from
-/// `AVCaptureDevice.RotationCoordinator` is passed straight through to
-/// `videoRotationAngle`. Previous attempts at guessing a fixed correction
-/// (landscape-only swap, then a uniform +180°) were each based on only one
-/// or two confirmed data points and turned out wrong or unconfirmed. This
-/// resets to a clean baseline so the next round of on-device testing gives
-/// unambiguous raw data to derive the actual correct mapping from, rather
-/// than compounding guesses.
+/// Confirmed via on-device testing (both Preview and Recording connections,
+/// across Portrait and Landscape Right, live while rotating): this back
+/// camera's sensor needs **no** rotation correction at all.
+/// `AVCaptureDevice.RotationCoordinator`'s raw angle can be applied directly
+/// to `AVCaptureConnection.videoRotationAngle` as-is.
+///
+/// Earlier attempts assumed a fixed sensor-mount offset was needed (a
+/// landscape-only 90°↔270° swap, then a uniform +180° shift) based on
+/// incomplete or misattributed data — this identity mapping is the version
+/// that was actually verified end-to-end on real hardware.
 extension CGFloat {
     nonisolated var sensorMountCorrected: CGFloat {
         self
