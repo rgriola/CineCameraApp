@@ -46,6 +46,7 @@ struct CameraPreview: UIViewRepresentable {
         private(set) var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
         private var observation: NSKeyValueObservation?
         private weak var previewLayer: AVCaptureVideoPreviewLayer?
+        private weak var device: AVCaptureDevice?
         private var isLocked = false
 
         init(cameraManager: CameraManager) {
@@ -55,6 +56,7 @@ struct CameraPreview: UIViewRepresentable {
         func attach(to view: PreviewUIView, device: AVCaptureDevice) {
             guard let previewLayer = view.previewLayer else { return }
             self.previewLayer = previewLayer
+            self.device = device
 
             let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
             rotationCoordinator = coordinator
@@ -82,13 +84,8 @@ struct CameraPreview: UIViewRepresentable {
         }
 
         private func apply(_ angle: CGFloat) {
-            guard !isLocked,
-                  let previewLayer,
-                  let connection = previewLayer.connection
-            else { return }
-            let corrected = angle.landscapeCorrected
-            guard connection.isVideoRotationAngleSupported(corrected) else { return }
-            connection.videoRotationAngle = corrected
+            guard !isLocked, let previewLayer, let connection = previewLayer.connection else { return }
+            connection.applyRotationAngle(angle, source: "Preview", device: device)
         }
     }
 

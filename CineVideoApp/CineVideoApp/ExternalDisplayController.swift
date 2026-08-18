@@ -36,6 +36,7 @@ final class ExternalDisplayController {
 
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var rotationObservation: NSKeyValueObservation?
+    private weak var rotationDevice: AVCaptureDevice?
     private var isOrientationLocked = false
 
     /// Builds the window UIKit should use for the external display's scene.
@@ -71,6 +72,7 @@ final class ExternalDisplayController {
         disableAudioMirroring()
         rotationObservation = nil
         rotationCoordinator = nil
+        rotationDevice = nil
         previewLayer = nil
         hostView = nil
         Logger.externalDisplay.notice("HDMI mirror window torn down.")
@@ -98,6 +100,7 @@ final class ExternalDisplayController {
             self?.updateLockState(isRecording: locked)
         }
         isOrientationLocked = CameraManager.shared.isRecording
+        rotationDevice = device
 
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
         rotationCoordinator = coordinator
@@ -126,9 +129,7 @@ final class ExternalDisplayController {
               let layer = layer ?? previewLayer,
               let connection = layer.connection
         else { return }
-        let corrected = angle.landscapeCorrected
-        guard connection.isVideoRotationAngleSupported(corrected) else { return }
-        connection.videoRotationAngle = corrected
+        connection.applyRotationAngle(angle, source: "HDMI", device: rotationDevice)
     }
 
     // MARK: - Audio follows video
