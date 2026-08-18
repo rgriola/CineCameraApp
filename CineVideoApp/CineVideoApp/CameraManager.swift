@@ -29,6 +29,15 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     nonisolated(unsafe) var videoDevice: AVCaptureDevice?
     nonisolated(unsafe) var isConfigured = false
 
+    // Drives the movie output connection's rotation angle as the device turns.
+    nonisolated(unsafe) var captureRotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    nonisolated(unsafe) var captureRotationObservation: NSKeyValueObservation?
+
+    // Set true for the duration of a recording. While locked, live rotation
+    // updates are ignored — this is the safety net that freezes camera
+    // preview, recording, and HDMI output orientation during capture.
+    nonisolated(unsafe) var isOrientationLocked = false
+
     // Callbacks that push state back to the main actor.
     nonisolated(unsafe) var onRecordingStateChange: (@Sendable (Bool) -> Void)?
     nonisolated(unsafe) var onSaveError: (@Sendable (String) -> Void)?
@@ -52,6 +61,18 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         error: Error?
     ) {
         Logger.recording.notice("Recording finished: \(outputFileURL.lastPathComponent, privacy: .public)")
+
+        // Recording has ended — release the orientation lock and immediately
+        // catch the connection up to wherever the device is currently held.
+        isOrientationLocked = false
+        if let coordinator = captureRotationCoordinator,
+           let connection = movieOutput.connection(with: .video) {
+            connection.applyRotationAngle(
+                coordinator.videoRotationAngleForHorizonLevelCapture,
+                source: "Recording",
+                device: videoDevice
+            )
+        }
 
         onRecordingStateChange?(false)
 
@@ -119,9 +140,18 @@ final class CameraManager: NSObject {
 
     var session: AVCaptureSession { cs.session }
 
-    /// The active video device, exposed so consumers (e.g. `CameraPreview`,
-    /// `ExternalDisplayController`) can log camera position/format context
-    /// alongside their orientation decisions. Only meaningful once the
+    /// Notifies observers whenever the orientation lock engages/releases
+    /// (i.e., recording starts/stops), so other consumers of the live camera
+    /// feed — like `ExternalDisplayController`'s HDMI mirror — can freeze and
+    /// unfreeze their own rotation in lockstep with the on-device preview.
+    /// `@ObservationIgnored` because this is a callback hook, not UI state —
+    /// `@Observable`'s macro can't synthesize tracking for a MainActor-typed
+    /// closure property.
+    @ObservationIgnored
+    var onOrientationLockChange: (@MainActor (Bool) -> Void)?
+
+    /// The active video device, exposed so `CameraPreview` can build its own
+    /// preview-specific `RotationCoordinator`. Only meaningful once the
     /// session has finished configuring (mirrors how `session` is exposed).
     var videoDevice: AVCaptureDevice? { cs.videoDevice }
 
@@ -149,12 +179,13 @@ final class CameraManager: NSObject {
             DispatchQueue.main.async {
                 self?.isRecording = recording
                 // Lock/unlock the app's UIKit-level interface-orientation mask
-                // — unrelated to the camera's own rotation, which is hardcoded.
+                // alongside the AVFoundation-level rotation lock in CameraSession.
                 if recording {
                     OrientationLock.lock()
                 } else {
                     OrientationLock.unlock()
                 }
+                self?.onOrientationLockChange?(recording)
             }
         }
         cs.onSaveError = { [weak self] message in
@@ -335,12 +366,9 @@ final class CameraManager: NSObject {
         cs.session.startRunning()
         Logger.camera.notice("Capture session configured and started.")
 
-        // TEMPORARY (branch fix/horizontal-preview): hardcode recording
-        // orientation instead of wiring a live RotationCoordinator — see
-        // RotationCorrection.swift.
-        if let connection = cs.movieOutput.connection(with: .video) {
-            connection.applyHardcodedLandscapeRight(source: "Recording", device: videoDevice)
-        }
+        // Rotation coordination is set up after commitConfiguration so the
+        // movie output's connection already exists.
+        setupCaptureRotationCoordinator(cs: cs, device: videoDevice)
 
         DispatchQueue.main.async { [weak self] in
             self?.isSessionRunning = cs.session.isRunning
@@ -409,6 +437,30 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Wires an `AVCaptureDevice.RotationCoordinator` to the movie output's
+    /// connection so recorded video always matches how the device is held,
+    /// unless `cs.isOrientationLocked` is set (during an active recording).
+    nonisolated private func setupCaptureRotationCoordinator(cs: CameraSession, device: AVCaptureDevice) {
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        cs.captureRotationCoordinator = coordinator
+
+        applyRotationAngle(coordinator.videoRotationAngleForHorizonLevelCapture, cs: cs)
+
+        cs.captureRotationObservation = coordinator.observe(
+            \.videoRotationAngleForHorizonLevelCapture, options: [.new]
+        ) { [weak self] _, change in
+            guard let self, let newAngle = change.newValue else { return }
+            self.sessionQueue.async {
+                self.applyRotationAngle(newAngle, cs: cs)
+            }
+        }
+    }
+
+    nonisolated private func applyRotationAngle(_ angle: CGFloat, cs: CameraSession) {
+        guard !cs.isOrientationLocked, let connection = cs.movieOutput.connection(with: .video) else { return }
+        connection.applyRotationAngle(angle, source: "Recording", device: cs.videoDevice)
+    }
+
     nonisolated private func performToggleRecording(cs: CameraSession) {
         guard cs.isConfigured else {
             Logger.recording.error("Session not configured — cannot record.")
@@ -421,7 +473,10 @@ final class CameraManager: NSObject {
             return
         }
 
-        Logger.recording.notice("Starting recording.")
+        Logger.recording.notice("Starting recording; locking orientation.")
+        // Freeze orientation for the duration of the recording — the safety
+        // net covering camera preview, recording, and HDMI output together.
+        cs.isOrientationLocked = true
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

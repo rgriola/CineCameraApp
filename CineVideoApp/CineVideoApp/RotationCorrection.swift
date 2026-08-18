@@ -6,30 +6,33 @@
 //
 
 import AVFoundation
+import CoreGraphics
 import OSLog
 
-/// TEMPORARY BASELINE (branch `fix/horizontal-preview`): camera preview,
-/// recording, and HDMI mirror are all hardcoded to Landscape Right (device
-/// held upright, USB‑C/Lightning port on the right) rather than dynamically
-/// tracking device rotation.
+/// `AVCaptureDevice.RotationCoordinator` computes the angle needed to keep
+/// video upright relative to gravity, but which physical landscape
+/// orientation counts as "upright" depends on how the back camera's sensor
+/// is mounted — it's a fixed 180° flip from what this app actually wants,
+/// specifically for landscape (this app supports only Landscape Right, never
+/// Landscape Left, so there's exactly one landscape case to correct).
 ///
-/// `AVCaptureDevice.RotationCoordinator` + `videoRotationAngle` (the modern,
-/// non-deprecated rotation API) computes an angle relative to gravity, but
-/// which physical landscape orientation counts as "upright" depends on the
-/// back camera sensor's mounting — on this device that produced a
-/// 180°-flipped image for landscape, and guessing the correct raw angle
-/// constant without physical hardware to test against isn't reliable.
-///
-/// Deliberately sidestepping that guesswork: `AVCaptureConnection.videoOrientation`
-/// (deprecated since iOS 17 in favor of `videoRotationAngle`, but still fully
-/// functional through iOS 18 — only emits a compiler deprecation warning)
-/// accepts the self-documenting `AVCaptureVideoOrientation.landscapeRight`
-/// case directly, with zero numeric ambiguity. Once this baseline is
-/// confirmed correct on-device, this can be revisited to restore live,
-/// rotation-coordinator-driven tracking for Portrait as well.
+/// Portrait angles (0°/180°) are untouched — only the landscape angles
+/// (90°/270°) are swapped. Applied uniformly everywhere a rotation angle from
+/// a `RotationCoordinator` is set on an `AVCaptureConnection`, so the
+/// on-device preview, the recorded file, and the HDMI mirror all agree.
+extension CGFloat {
+    nonisolated var landscapeCorrected: CGFloat {
+        switch self {
+        case 90: return 270
+        case 270: return 90
+        default: return self
+        }
+    }
+}
+
 extension AVCaptureDevice {
     /// Compact, log-friendly summary of this device's position and active
-    /// format (e.g. "back 1920x1080@30"), so orientation log lines make it
+    /// format (e.g. "back 1920x1080@30"), so rotation-angle log lines make it
     /// obvious which camera/format was active at the time.
     nonisolated var loggingDescription: String {
         let positionText: String
@@ -48,32 +51,27 @@ extension AVCaptureDevice {
 }
 
 extension AVCaptureConnection {
-    /// Hardcodes this connection to Landscape Right, logging whenever the
-    /// resulting orientation actually changes. `source` identifies which
-    /// consumer is logging (e.g. "Preview", "Recording", "HDMI") so
-    /// Console.app output makes it obvious which of the three is being
-    /// updated, and `device` supplies the camera position + active format
-    /// for context.
-    ///
-    /// Intentionally calls the deprecated `videoOrientation` API (see the
-    /// type-level comment above) — Swift has no way to silence a deprecation
-    /// warning without also deprecating this wrapper itself (which would
-    /// just push the same warning out to every call site instead), so the
-    /// warnings below are expected and contained to this one function.
+    /// Applies a raw `RotationCoordinator` angle to this connection, with the
+    /// shared landscape correction above, logging whenever the resulting
+    /// angle actually changes. `source` identifies which consumer is logging
+    /// (e.g. "Preview", "Recording", "HDMI") so Console.app output makes it
+    /// obvious which of the three (preview/recording/HDMI) is being updated,
+    /// and `device` supplies the camera position + active format for context.
     @discardableResult
-    nonisolated func applyHardcodedLandscapeRight(source: String, device: AVCaptureDevice?) -> Bool {
+    nonisolated func applyRotationAngle(_ rawAngle: CGFloat, source: String, device: AVCaptureDevice?) -> Bool {
+        let corrected = rawAngle.landscapeCorrected
         let deviceInfo = device?.loggingDescription ?? "unknown device"
 
-        guard isVideoOrientationSupported else {
-            Logger.orientation.warning("\(source, privacy: .public) [\(deviceInfo, privacy: .public)]: landscapeRight is unsupported on this connection.")
+        guard isVideoRotationAngleSupported(corrected) else {
+            Logger.orientation.warning("\(source, privacy: .public) [\(deviceInfo, privacy: .public)]: angle \(corrected, privacy: .public)\u{00B0} (raw \(rawAngle, privacy: .public)\u{00B0}) is unsupported; leaving unchanged.")
             return false
         }
 
-        let didChange = videoOrientation != .landscapeRight
-        videoOrientation = .landscapeRight
+        let didChange = videoRotationAngle != corrected
+        videoRotationAngle = corrected
 
         if didChange {
-            Logger.orientation.notice("\(source, privacy: .public) [\(deviceInfo, privacy: .public)]: orientation hardcoded to landscapeRight.")
+            Logger.orientation.notice("\(source, privacy: .public) [\(deviceInfo, privacy: .public)]: rotation angle set to \(corrected, privacy: .public)\u{00B0} (raw \(rawAngle, privacy: .public)\u{00B0} from RotationCoordinator).")
         }
         return didChange
     }
