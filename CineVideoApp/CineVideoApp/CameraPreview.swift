@@ -84,10 +84,11 @@ struct CameraPreview: UIViewRepresentable {
         private func apply(_ angle: CGFloat) {
             guard !isLocked,
                   let previewLayer,
-                  let connection = previewLayer.connection,
-                  connection.isVideoRotationAngleSupported(angle)
+                  let connection = previewLayer.connection
             else { return }
-            connection.videoRotationAngle = angle
+            let corrected = angle.landscapeCorrected
+            guard connection.isVideoRotationAngleSupported(corrected) else { return }
+            connection.videoRotationAngle = corrected
         }
     }
 

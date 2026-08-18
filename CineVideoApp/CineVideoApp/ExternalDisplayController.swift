@@ -124,10 +124,11 @@ final class ExternalDisplayController {
     private func apply(_ angle: CGFloat, to layer: AVCaptureVideoPreviewLayer? = nil) {
         guard !isOrientationLocked,
               let layer = layer ?? previewLayer,
-              let connection = layer.connection,
-              connection.isVideoRotationAngleSupported(angle)
+              let connection = layer.connection
         else { return }
-        connection.videoRotationAngle = angle
+        let corrected = angle.landscapeCorrected
+        guard connection.isVideoRotationAngleSupported(corrected) else { return }
+        connection.videoRotationAngle = corrected
     }
 
     // MARK: - Audio follows video

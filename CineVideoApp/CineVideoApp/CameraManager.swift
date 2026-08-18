@@ -67,7 +67,7 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         isOrientationLocked = false
         if let coordinator = captureRotationCoordinator,
            let connection = movieOutput.connection(with: .video) {
-            let angle = coordinator.videoRotationAngleForHorizonLevelCapture
+            let angle = coordinator.videoRotationAngleForHorizonLevelCapture.landscapeCorrected
             if connection.isVideoRotationAngleSupported(angle) {
                 connection.videoRotationAngle = angle
             }
@@ -457,10 +457,11 @@ final class CameraManager: NSObject {
 
     nonisolated private func applyRotationAngle(_ angle: CGFloat, cs: CameraSession) {
         guard !cs.isOrientationLocked else { return }
+        let corrected = angle.landscapeCorrected
         guard let connection = cs.movieOutput.connection(with: .video),
-              connection.isVideoRotationAngleSupported(angle)
+              connection.isVideoRotationAngleSupported(corrected)
         else { return }
-        connection.videoRotationAngle = angle
+        connection.videoRotationAngle = corrected
     }
 
     nonisolated private func performToggleRecording(cs: CameraSession) {
