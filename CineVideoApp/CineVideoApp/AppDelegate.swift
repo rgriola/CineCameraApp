@@ -60,33 +60,15 @@ enum OrientationLock {
 
 /// Minimal delegate whose sole job is to enforce the app-wide orientation
 /// restriction: Portrait + Landscape Right only, further narrowed to whichever
-/// single orientation is locked while recording. It also hands UIKit a
-/// dedicated scene configuration for connected external displays, so a
-/// plugged-in monitor gets our own HDMI mirror content (via
-/// `ExternalDisplaySceneDelegate`) instead of the OS's default screen mirror.
+/// single orientation is locked while recording. It also starts
+/// `ExternalDisplayController` observing for a connected HDMI/USB display as
+/// early as possible in the app's lifetime.
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
-        // TEMPORARY DIAGNOSTIC: UIScreen.didConnectNotification predates the
-        // Scene API entirely (iOS 3.2+) and fires whenever iOS recognizes any
-        // additional physical/virtual screen, regardless of whether our
-        // scene-based mechanism below is working. If this fires but
-        // configurationForConnecting never sees a second scene, that proves
-        // iOS sees the HDMI display but isn't requesting a distinct scene for
-        // it — a different problem than our role-check logic being wrong.
-        NotificationCenter.default.addObserver(
-            forName: UIScreen.didConnectNotification, object: nil, queue: .main
-        ) { notification in
-            let screen = notification.object as? UIScreen
-            Logger.externalDisplay.error("DIAG UIScreen.didConnectNotification fired. screen=\(String(describing: screen), privacy: .public) totalScreens=\(UIScreen.screens.count, privacy: .public)")
-        }
-        NotificationCenter.default.addObserver(
-            forName: UIScreen.didDisconnectNotification, object: nil, queue: .main
-        ) { _ in
-            Logger.externalDisplay.error("DIAG UIScreen.didDisconnectNotification fired. totalScreens=\(UIScreen.screens.count, privacy: .public)")
-        }
+        ExternalDisplayController.shared.start()
         return true
     }
 
@@ -95,37 +77,5 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
         OrientationLock.isLocked ? OrientationLock.lockedMask : [.portrait, .landscapeRight]
-    }
-
-    /// Without this, UIKit still creates a scene for a connected external
-    /// display, but fills it with a default mirror of the app's main screen
-    /// rather than invoking any of our own code — that default mirror is
-    /// exactly what was showing up on the monitor (including the record
-    /// button) instead of the intended HDMI camera preview.
-    func application(
-        _ application: UIApplication,
-        configurationForConnecting connectingSceneSession: UISceneSession,
-        options: UIScene.ConnectionOptions
-    ) -> UISceneConfiguration {
-        // TEMPORARY DIAGNOSTIC: .error level, unconditional — confirms this
-        // delegate method is even being invoked at all when the external
-        // display connects, and what role/name UIKit is actually offering
-        // for that connecting session (role is the deciding factor for
-        // whether our custom delegate gets attached below).
-        Logger.externalDisplay.error("DIAG configurationForConnecting called. role=\(connectingSceneSession.role.rawValue, privacy: .public) name=\(connectingSceneSession.configuration.name ?? "nil", privacy: .public)")
-
-        let configuration = UISceneConfiguration(
-            name: connectingSceneSession.configuration.name,
-            sessionRole: connectingSceneSession.role
-        )
-
-        if connectingSceneSession.role == .windowExternalDisplayNonInteractive {
-            Logger.externalDisplay.error("DIAG Role matched windowExternalDisplayNonInteractive — assigning ExternalDisplaySceneDelegate.")
-            configuration.delegateClass = ExternalDisplaySceneDelegate.self
-        } else {
-            Logger.externalDisplay.error("DIAG Role did NOT match windowExternalDisplayNonInteractive — using default configuration.")
-        }
-
-        return configuration
     }
 }

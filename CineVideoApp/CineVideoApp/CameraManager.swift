@@ -10,6 +10,15 @@ import OSLog
 import Photos
 import SwiftUI
 
+/// Wraps a non-`Sendable` reference (e.g. a `CALayer` subclass) so it can be
+/// captured in a `@Sendable` closure for a single, deliberate cross-queue
+/// hop. Safe only when the caller follows the same discipline every other
+/// `nonisolated(unsafe)` value in this file does: access is manually
+/// serialized by convention, never actually touched concurrently.
+private struct UncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+}
+
 // ---------------------------------------------------------------------------
 // CameraSession — plain NSObject that owns all AVFoundation objects.
 // No @Observable, no @MainActor isolation. Lives entirely on sessionQueue.
@@ -243,6 +252,78 @@ final class CameraManager: NSObject {
     nonisolated func withSessionQueue(_ work: @escaping @Sendable (AVCaptureSession) -> Void) {
         let session = cs.session
         sessionQueue.async { work(session) }
+    }
+
+    /// Manually attaches a second, simultaneous preview layer — used by
+    /// `ExternalDisplayController`'s HDMI mirror — to the capture session's
+    /// existing video input.
+    ///
+    /// `AVCaptureSession` only automatically manages ONE preview-layer
+    /// connection: the one `CameraPreview` creates via the convenience
+    /// initializer `AVCaptureVideoPreviewLayer(session:)`. Creating a
+    /// *second* preview layer that same way steals that single
+    /// auto-managed connection out from under the first layer — confirmed
+    /// on-device: the on-device preview's `connection` went nil the
+    /// instant the HDMI layer was created via that initializer, even after
+    /// the session was fully configured, and never recovered. Apple's
+    /// supported pattern for multiple simultaneous preview layers on one
+    /// input is to build each additional connection manually via
+    /// `AVCaptureConnection(inputPort:videoPreviewLayer:)` and add it to
+    /// the session explicitly — which is what this does, on `sessionQueue`,
+    /// wrapped in `beginConfiguration()`/`commitConfiguration()` like every
+    /// other session mutation. `completion` is always invoked on the main
+    /// actor, so callers can safely touch UI/`@Observable` state from it.
+    nonisolated func attachSecondaryPreviewLayer(
+        _ layer: AVCaptureVideoPreviewLayer,
+        completion: @escaping @MainActor @Sendable (Bool) -> Void
+    ) {
+        let cs = self.cs
+        // `AVCaptureVideoPreviewLayer` (a `CALayer`) isn't `Sendable`, but is
+        // safe to hand across this one hop: `sessionQueue` only reads it
+        // once, synchronously, to build a connection, and every caller only
+        // ever touches the layer itself back on the main actor — the same
+        // "manually serialized by convention" pattern `CameraSession` uses.
+        let box = UncheckedSendableBox(value: layer)
+        sessionQueue.async {
+            let layer = box.value
+            guard
+                let videoInput = cs.videoInput,
+                let port = videoInput.ports.first(where: { $0.mediaType == .video })
+            else {
+                Logger.camera.error("Cannot attach secondary preview layer: no video input port.")
+                Task { @MainActor in completion(false) }
+                return
+            }
+
+            let connection = AVCaptureConnection(inputPort: port, videoPreviewLayer: layer)
+
+            cs.session.beginConfiguration()
+            guard cs.session.canAddConnection(connection) else {
+                cs.session.commitConfiguration()
+                Logger.camera.error("Cannot add secondary preview connection.")
+                Task { @MainActor in completion(false) }
+                return
+            }
+            cs.session.addConnection(connection)
+            cs.session.commitConfiguration()
+
+            Task { @MainActor in completion(true) }
+        }
+    }
+
+    /// Removes a secondary preview layer's manually-created connection
+    /// (the counterpart to `attachSecondaryPreviewLayer`) — e.g. when the
+    /// HDMI display disconnects — so the session doesn't keep mutating a
+    /// deallocated layer.
+    nonisolated func detachSecondaryPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
+        let cs = self.cs
+        let box = UncheckedSendableBox(value: layer)
+        sessionQueue.async {
+            guard let connection = box.value.connection else { return }
+            cs.session.beginConfiguration()
+            cs.session.removeConnection(connection)
+            cs.session.commitConfiguration()
+        }
     }
 
     // MARK: - Permission cascade (main actor)
