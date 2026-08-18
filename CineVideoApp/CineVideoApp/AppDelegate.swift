@@ -67,6 +67,31 @@ enum OrientationLock {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+        // TEMPORARY DIAGNOSTIC: UIScreen.didConnectNotification predates the
+        // Scene API entirely (iOS 3.2+) and fires whenever iOS recognizes any
+        // additional physical/virtual screen, regardless of whether our
+        // scene-based mechanism below is working. If this fires but
+        // configurationForConnecting never sees a second scene, that proves
+        // iOS sees the HDMI display but isn't requesting a distinct scene for
+        // it — a different problem than our role-check logic being wrong.
+        NotificationCenter.default.addObserver(
+            forName: UIScreen.didConnectNotification, object: nil, queue: .main
+        ) { notification in
+            let screen = notification.object as? UIScreen
+            Logger.externalDisplay.error("DIAG UIScreen.didConnectNotification fired. screen=\(String(describing: screen), privacy: .public) totalScreens=\(UIScreen.screens.count, privacy: .public)")
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIScreen.didDisconnectNotification, object: nil, queue: .main
+        ) { _ in
+            Logger.externalDisplay.error("DIAG UIScreen.didDisconnectNotification fired. totalScreens=\(UIScreen.screens.count, privacy: .public)")
+        }
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
         OrientationLock.isLocked ? OrientationLock.lockedMask : [.portrait, .landscapeRight]
