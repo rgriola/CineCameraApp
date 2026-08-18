@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import OSLog
 
 /// Taps the capture session's live audio and plays it back immediately
 /// through `AVAudioEngine`. `AVCaptureAudioPreviewOutput` — the obvious API
@@ -34,11 +35,15 @@ final class AudioMirror: NSObject, @unchecked Sendable {
     /// types in this SDK, so this — like `ExternalDisplayController`, its
     /// only caller — runs on the main actor rather than the session queue.
     func start(on session: AVCaptureSession) {
-        guard session.canAddOutput(audioOutput) else { return }
+        guard session.canAddOutput(audioOutput) else {
+            Logger.externalDisplay.warning("Cannot add audio mirror output to session.")
+            return
+        }
         audioOutput.setSampleBufferDelegate(self, queue: processingQueue)
         session.beginConfiguration()
         session.addOutput(audioOutput)
         session.commitConfiguration()
+        Logger.externalDisplay.notice("Audio mirror tap added to session.")
     }
 
     /// Removes the audio tap from `session` and tears down the engine.
@@ -47,6 +52,7 @@ final class AudioMirror: NSObject, @unchecked Sendable {
         session.removeOutput(audioOutput)
         session.commitConfiguration()
         teardownEngine()
+        Logger.externalDisplay.notice("Audio mirror tap removed from session.")
     }
 
     private func teardownEngine() {
@@ -70,8 +76,9 @@ final class AudioMirror: NSObject, @unchecked Sendable {
             playerNode.play()
             isEngineRunning = true
             connectedFormat = format
+            Logger.externalDisplay.info("Audio mirror engine started.")
         } catch {
-            print("AudioMirror failed to start engine: \(error.localizedDescription)")
+            Logger.externalDisplay.error("AudioMirror failed to start engine: \(error.localizedDescription, privacy: .public)")
         }
     }
 

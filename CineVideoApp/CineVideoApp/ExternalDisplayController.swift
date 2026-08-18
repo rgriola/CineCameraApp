@@ -7,6 +7,7 @@
 
 import UIKit
 @preconcurrency import AVFoundation
+import OSLog
 
 /// Mirrors the live camera session to an external display connected via a
 /// USB‑C/Lightning → HDMI adapter, at a fixed 1920x1080 landscape framing that
@@ -63,6 +64,7 @@ final class ExternalDisplayController: NSObject {
     }
 
     private func attach(to scene: UIWindowScene) {
+        Logger.externalDisplay.notice("External display connected; attaching HDMI mirror.")
         let window = UIWindow(windowScene: scene)
         window.backgroundColor = .black
 
@@ -93,6 +95,7 @@ final class ExternalDisplayController: NSObject {
     }
 
     private func detach() {
+        Logger.externalDisplay.notice("External display disconnected; tearing down HDMI mirror.")
         disableAudioMirroring()
         externalWindow?.isHidden = true
         externalWindow = nil

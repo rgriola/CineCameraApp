@@ -6,6 +6,7 @@
 //
 
 @preconcurrency import AVFoundation
+import OSLog
 import Photos
 import SwiftUI
 
@@ -49,6 +50,7 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         didStartRecordingTo fileURL: URL,
         from connections: [AVCaptureConnection]
     ) {
+        Logger.recording.notice("Recording started: \(fileURL.lastPathComponent, privacy: .public)")
         onRecordingStateChange?(true)
     }
 
@@ -58,6 +60,8 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
+        Logger.recording.notice("Recording finished: \(outputFileURL.lastPathComponent, privacy: .public)")
+
         // Recording has ended — release the orientation lock and immediately
         // catch the connection up to wherever the device is currently held.
         isOrientationLocked = false
@@ -72,6 +76,7 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         onRecordingStateChange?(false)
 
         if let error {
+            Logger.recording.error("Recording failed: \(error.localizedDescription, privacy: .public)")
             onSaveError?("Recording failed: \(error.localizedDescription)")
             try? FileManager.default.removeItem(at: outputFileURL)
             return
@@ -83,6 +88,7 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
     nonisolated private func saveToPhotoLibrary(_ url: URL) {
         let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
         guard status == .authorized || status == .limited else {
+            Logger.recording.error("Cannot save recording — Photo Library permission not granted.")
             onSaveError?("Photo Library permission is required to save recordings.")
             try? FileManager.default.removeItem(at: url)
             return
@@ -94,9 +100,13 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         } completionHandler: { [weak self] success, error in
             try? FileManager.default.removeItem(at: url)
             if let error {
+                Logger.recording.error("Failed to save video: \(error.localizedDescription, privacy: .public)")
                 self?.onSaveError?("Failed to save video: \(error.localizedDescription)")
             } else if !success {
+                Logger.recording.error("Video save did not complete.")
                 self?.onSaveError?("Video save did not complete.")
+            } else {
+                Logger.recording.notice("Video saved to Photo Library.")
             }
         }
     }
@@ -174,15 +184,18 @@ final class CameraManager: NSObject {
 
         switch cameraAuthStatus {
         case .authorized:
+            Logger.permissions.info("Camera already authorized.")
             checkMicrophonePermission()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
+                    Logger.permissions.notice("Camera permission request result: \(granted, privacy: .public)")
                     self?.cameraAuthStatus = granted ? .authorized : .denied
                     self?.checkMicrophonePermission()
                 }
             }
         case .denied, .restricted:
+            Logger.permissions.notice("Camera permission denied or restricted.")
             checkMicrophonePermission() // refresh remaining statuses for the gate UI
         @unknown default:
             cameraAuthStatus = .denied
@@ -204,15 +217,18 @@ final class CameraManager: NSObject {
 
         switch microphoneAuthStatus {
         case .authorized:
+            Logger.permissions.info("Microphone already authorized.")
             checkPhotoLibraryPermission()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
                 DispatchQueue.main.async {
+                    Logger.permissions.notice("Microphone permission request result: \(granted, privacy: .public)")
                     self?.microphoneAuthStatus = granted ? .authorized : .denied
                     self?.checkPhotoLibraryPermission()
                 }
             }
         case .denied, .restricted:
+            Logger.permissions.notice("Microphone permission denied or restricted.")
             checkPhotoLibraryPermission()
         @unknown default:
             microphoneAuthStatus = .denied
@@ -224,16 +240,18 @@ final class CameraManager: NSObject {
 
         switch photoLibraryAuthStatus {
         case .authorized, .limited:
+            Logger.permissions.info("Photo Library already authorized (add-only).")
             startSessionIfAuthorized()
         case .notDetermined:
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
                 DispatchQueue.main.async {
+                    Logger.permissions.notice("Photo Library permission request result: \(String(describing: status), privacy: .public)")
                     self?.photoLibraryAuthStatus = status
                     self?.startSessionIfAuthorized()
                 }
             }
         case .denied, .restricted:
-            break
+            Logger.permissions.notice("Photo Library permission denied or restricted.")
         @unknown default:
             photoLibraryAuthStatus = .denied
         }
@@ -267,13 +285,13 @@ final class CameraManager: NSObject {
         guard let videoDevice = AVCaptureDevice.default(
             .builtInWideAngleCamera, for: .video, position: .back)
         else {
-            print("Failed to find a video device.")
+            Logger.camera.error("Failed to find a video device.")
             cs.session.commitConfiguration()
             return
         }
 
         guard let audioDevice = AVCaptureDevice.default(for: .audio) else {
-            print("Failed to find an audio device.")
+            Logger.camera.error("Failed to find an audio device.")
             cs.session.commitConfiguration()
             return
         }
@@ -283,15 +301,15 @@ final class CameraManager: NSObject {
             let audioInput = try AVCaptureDeviceInput(device: audioDevice)
 
             guard cs.session.canAddInput(videoInput) else {
-                print("Cannot add video input.")
+                Logger.camera.error("Cannot add video input.")
                 cs.session.commitConfiguration(); return
             }
             guard cs.session.canAddInput(audioInput) else {
-                print("Cannot add audio input.")
+                Logger.camera.error("Cannot add audio input.")
                 cs.session.commitConfiguration(); return
             }
             guard cs.session.canAddOutput(cs.movieOutput) else {
-                print("Cannot add movie output.")
+                Logger.camera.error("Cannot add movie output.")
                 cs.session.commitConfiguration(); return
             }
 
@@ -308,13 +326,14 @@ final class CameraManager: NSObject {
             applyHEVCCodec(cs: cs)
 
         } catch {
-            print("Failed to create capture inputs: \(error.localizedDescription)")
+            Logger.camera.error("Failed to create capture inputs: \(error.localizedDescription, privacy: .public)")
             cs.session.commitConfiguration()
             return
         }
 
         cs.session.commitConfiguration()
         cs.session.startRunning()
+        Logger.camera.notice("Capture session configured and started.")
 
         // Rotation coordination is set up after commitConfiguration so the
         // movie output's connection already exists.
@@ -340,7 +359,7 @@ final class CameraManager: NSObject {
         }
 
         guard let format = matchingFormat else {
-            print("No exact 1920x1080@30 format found on this device; using default format.")
+            Logger.camera.warning("No exact 1920x1080@30 format found on this device; using default format.")
             return
         }
 
@@ -350,8 +369,9 @@ final class CameraManager: NSObject {
             device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
             device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
             device.unlockForConfiguration()
+            Logger.camera.info("Applied Cine-HD format: 1920x1080@30.")
         } catch {
-            print("Failed to lock device for Cine-HD format configuration: \(error.localizedDescription)")
+            Logger.camera.error("Failed to lock device for Cine-HD format configuration: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -362,6 +382,7 @@ final class CameraManager: NSObject {
         let availableCodecs = cs.movieOutput.availableVideoCodecTypes
         let codec: AVVideoCodecType = availableCodecs.contains(.hevc) ? .hevc : .h264
         cs.movieOutput.setOutputSettings([AVVideoCodecKey: codec], for: connection)
+        Logger.camera.info("Movie output codec set to \(codec.rawValue, privacy: .public).")
     }
 
     /// Wires an `AVCaptureDevice.RotationCoordinator` to the movie output's
@@ -393,15 +414,17 @@ final class CameraManager: NSObject {
 
     nonisolated private func performToggleRecording(cs: CameraSession) {
         guard cs.isConfigured else {
-            print("Session not configured — cannot record.")
+            Logger.recording.error("Session not configured — cannot record.")
             return
         }
 
         if cs.movieOutput.isRecording {
+            Logger.recording.notice("Stopping recording.")
             cs.movieOutput.stopRecording()
             return
         }
 
+        Logger.recording.notice("Starting recording; locking orientation.")
         // Freeze orientation for the duration of the recording — the safety
         // net covering camera preview, recording, and HDMI output together.
         cs.isOrientationLocked = true

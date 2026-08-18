@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import OSLog
 
 /// Shared flag consulted by `AppDelegate` to restrict interface rotation while
 /// recording is active. UIKit on iOS 18 calls delegate rotation queries on the
@@ -26,6 +27,7 @@ enum OrientationLock {
 
         lockedMask = current.isLandscape ? .landscapeLeft : .portrait
         isLocked = true
+        Logger.orientation.notice("Orientation locked to \(String(describing: lockedMask), privacy: .public).")
         requestUpdate()
     }
 
@@ -42,6 +44,7 @@ enum OrientationLock {
     /// Portrait and Landscape Left. Called when recording stops.
     static func unlock() {
         isLocked = false
+        Logger.orientation.notice("Orientation unlocked.")
         requestUpdate()
     }
 
