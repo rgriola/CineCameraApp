@@ -9,24 +9,17 @@ import AVFoundation
 import CoreGraphics
 import OSLog
 
-/// `AVCaptureDevice.RotationCoordinator` computes the angle needed to keep
-/// video upright relative to gravity, but which physical landscape
-/// orientation counts as "upright" depends on how the back camera's sensor
-/// is mounted — it's a fixed 180° flip from what this app actually wants,
-/// specifically for landscape (this app supports only Landscape Right, never
-/// Landscape Left, so there's exactly one landscape case to correct).
-///
-/// Portrait angles (0°/180°) are untouched — only the landscape angles
-/// (90°/270°) are swapped. Applied uniformly everywhere a rotation angle from
-/// a `RotationCoordinator` is set on an `AVCaptureConnection`, so the
-/// on-device preview, the recorded file, and the HDMI mirror all agree.
+/// TEMPORARY DIAGNOSTIC STATE: no correction is applied — the raw angle from
+/// `AVCaptureDevice.RotationCoordinator` is passed straight through to
+/// `videoRotationAngle`. Previous attempts at guessing a fixed correction
+/// (landscape-only swap, then a uniform +180°) were each based on only one
+/// or two confirmed data points and turned out wrong or unconfirmed. This
+/// resets to a clean baseline so the next round of on-device testing gives
+/// unambiguous raw data to derive the actual correct mapping from, rather
+/// than compounding guesses.
 extension CGFloat {
-    nonisolated var landscapeCorrected: CGFloat {
-        switch self {
-        case 90: return 270
-        case 270: return 90
-        default: return self
-        }
+    nonisolated var sensorMountCorrected: CGFloat {
+        self
     }
 }
 
@@ -52,14 +45,14 @@ extension AVCaptureDevice {
 
 extension AVCaptureConnection {
     /// Applies a raw `RotationCoordinator` angle to this connection, with the
-    /// shared landscape correction above, logging whenever the resulting
+    /// shared sensor-mount correction above, logging whenever the resulting
     /// angle actually changes. `source` identifies which consumer is logging
     /// (e.g. "Preview", "Recording", "HDMI") so Console.app output makes it
     /// obvious which of the three (preview/recording/HDMI) is being updated,
     /// and `device` supplies the camera position + active format for context.
     @discardableResult
     nonisolated func applyRotationAngle(_ rawAngle: CGFloat, source: String, device: AVCaptureDevice?) -> Bool {
-        let corrected = rawAngle.landscapeCorrected
+        let corrected = rawAngle.sensorMountCorrected
         let deviceInfo = device?.loggingDescription ?? "unknown device"
         let connectionID = ObjectIdentifier(self)
 
