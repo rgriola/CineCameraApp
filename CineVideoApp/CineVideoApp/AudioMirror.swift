@@ -16,25 +16,55 @@ import OSLog
 /// output route is — including a connected HDMI/USB adapter — is where this
 /// plays; no manual route targeting is needed or possible on iOS.
 ///
-/// `AVAudioEngine`/`AVAudioPlayerNode` are MainActor-isolated types in this
-/// SDK, so engine setup/playback is hopped to the main actor. Sample buffers
-/// arrive on a background queue and are converted to `AVAudioPCMBuffer`
-/// (plain CoreMedia/CoreAudio work, not actor-isolated) before that hop, so
-/// the conversion itself never blocks the main thread.
+/// `start(on:)`/`stop(on:)` are `nonisolated` so `ExternalDisplayController`
+/// can dispatch them onto `CameraManager`'s sessionQueue — every
+/// `AVCaptureSession` mutation in this app funnels through that one queue,
+/// since the session isn't safe for concurrent configuration from multiple
+/// threads. `AVAudioEngine`/`AVAudioPlayerNode`, however, are MainActor-isolated
+/// types in this SDK, so engine setup/playback/teardown always hops to main.
 final class AudioMirror: NSObject, @unchecked Sendable {
-    private let audioOutput = AVCaptureAudioDataOutput()
+    // `nonisolated(unsafe)` — touched only from sessionQueue (session add/
+    // remove) or the capture delegate callback (itself off-main), never
+    // concurrently, by convention — same pattern as `CameraSession`.
+    nonisolated(unsafe) private let audioOutput = AVCaptureAudioDataOutput()
     private let processingQueue = DispatchQueue(label: "com.cinevideoapp.audiomirror")
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private var isEngineRunning = false
     private var connectedFormat: AVAudioFormat?
+    private var configurationChangeObserver: NSObjectProtocol?
 
-    /// Adds the audio tap to `session` and prepares for playback. Both
-    /// `AVCaptureAudioDataOutput` and `AVAudioEngine` are MainActor-isolated
-    /// types in this SDK, so this — like `ExternalDisplayController`, its
-    /// only caller — runs on the main actor rather than the session queue.
-    func start(on session: AVCaptureSession) {
+    override init() {
+        super.init()
+
+        // The hardware graph AVAudioEngine built (sample rate, channel
+        // layout, the physical output device) can become stale the instant
+        // the active audio route changes — e.g. an HDMI adapter connecting
+        // introduces a new output route. Continuing to drive a stale graph
+        // is what throws the uncaught Objective-C exceptions that take the
+        // whole app down, so any configuration change fully rebuilds it.
+        configurationChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                Logger.externalDisplay.notice("AVAudioEngine configuration changed; rebuilding audio mirror graph.")
+                self?.teardownEngine()
+            }
+        }
+    }
+
+    deinit {
+        if let configurationChangeObserver {
+            NotificationCenter.default.removeObserver(configurationChangeObserver)
+        }
+    }
+
+    /// Adds the audio tap to `session`. Must be called on the session's own
+    /// serial queue — see `CameraManager.withSessionQueue`.
+    nonisolated func start(on session: AVCaptureSession) {
         guard session.canAddOutput(audioOutput) else {
             Logger.externalDisplay.warning("Cannot add audio mirror output to session.")
             return
@@ -46,13 +76,17 @@ final class AudioMirror: NSObject, @unchecked Sendable {
         Logger.externalDisplay.notice("Audio mirror tap added to session.")
     }
 
-    /// Removes the audio tap from `session` and tears down the engine.
-    func stop(on session: AVCaptureSession) {
+    /// Removes the audio tap from `session` and tears down the engine. Must
+    /// be called on the session's own serial queue — see `CameraManager.withSessionQueue`.
+    nonisolated func stop(on session: AVCaptureSession) {
         session.beginConfiguration()
         session.removeOutput(audioOutput)
         session.commitConfiguration()
-        teardownEngine()
         Logger.externalDisplay.notice("Audio mirror tap removed from session.")
+
+        Task { @MainActor [self] in
+            teardownEngine()
+        }
     }
 
     private func teardownEngine() {
@@ -65,6 +99,10 @@ final class AudioMirror: NSObject, @unchecked Sendable {
     }
 
     private func ensureEngineRunning(format: AVAudioFormat) {
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            Logger.externalDisplay.error("Ignoring invalid audio format: sampleRate=\(format.sampleRate), channels=\(format.channelCount).")
+            return
+        }
         if isEngineRunning, connectedFormat == format { return }
         if isEngineRunning { teardownEngine() }
 
@@ -76,7 +114,7 @@ final class AudioMirror: NSObject, @unchecked Sendable {
             playerNode.play()
             isEngineRunning = true
             connectedFormat = format
-            Logger.externalDisplay.info("Audio mirror engine started.")
+            Logger.externalDisplay.info("Audio mirror engine started: \(format.sampleRate, privacy: .public)Hz, \(format.channelCount, privacy: .public)ch.")
         } catch {
             Logger.externalDisplay.error("AudioMirror failed to start engine: \(error.localizedDescription, privacy: .public)")
         }
@@ -84,6 +122,7 @@ final class AudioMirror: NSObject, @unchecked Sendable {
 
     private func play(_ pcmBuffer: AVAudioPCMBuffer, format: AVAudioFormat) {
         ensureEngineRunning(format: format)
+        guard isEngineRunning else { return }
         playerNode.scheduleBuffer(pcmBuffer)
     }
 }

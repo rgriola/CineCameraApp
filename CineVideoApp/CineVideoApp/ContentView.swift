@@ -8,8 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var cameraManager = CameraManager()
-    @State private var externalDisplayController: ExternalDisplayController?
+    @State private var cameraManager = CameraManager.shared
 
     var body: some View {
         Group {
@@ -27,9 +26,6 @@ struct ContentView: View {
         }
         .onAppear {
             cameraManager.checkPermissions()
-            if externalDisplayController == nil {
-                externalDisplayController = ExternalDisplayController(cameraManager: cameraManager)
-            }
         }
         .alert(
             "Recording Error",
@@ -46,7 +42,10 @@ struct ContentView: View {
 
     private var cameraView: some View {
         ZStack(alignment: .bottom) {
-            CameraPreview(session: cameraManager.session, cameraManager: cameraManager)
+            CameraPreview(
+                session: cameraManager.session, 
+                cameraManager: cameraManager
+                )
                 .ignoresSafeArea()
 
             Button {

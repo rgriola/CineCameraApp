@@ -123,6 +123,12 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
 @Observable
 final class CameraManager: NSObject {
 
+    /// Single shared instance — the camera session and its state must be the
+    /// same object whether it's driven by the main app UI or by the
+    /// external-display scene delegate (which UIKit instantiates itself and
+    /// can't be handed a SwiftUI-scoped instance via normal init injection).
+    static let shared = CameraManager()
+
     // MARK: - UI state (main actor)
     var isSessionRunning     = false
     var isRecording          = false
@@ -210,6 +216,17 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Escape hatch that lets other components (namely `ExternalDisplayController`,
+    /// for adding/removing its audio-mirror output) safely mutate the capture
+    /// session on the same serial queue `CameraManager` itself uses — never on
+    /// the caller's own thread. `AVCaptureSession` isn't safe for concurrent
+    /// configuration from multiple threads, so every mutation must funnel
+    /// through this one queue.
+    nonisolated func withSessionQueue(_ work: @escaping @Sendable (AVCaptureSession) -> Void) {
+        let session = cs.session
+        sessionQueue.async { work(session) }
+    }
+
     // MARK: - Permission cascade (main actor)
 
     private func checkMicrophonePermission() {
@@ -279,6 +296,8 @@ final class CameraManager: NSObject {
             }
             return
         }
+
+        configureAudioSession()
 
         cs.session.beginConfiguration()
 
@@ -383,6 +402,27 @@ final class CameraManager: NSObject {
         let codec: AVVideoCodecType = availableCodecs.contains(.hevc) ? .hevc : .h264
         cs.movieOutput.setOutputSettings([AVVideoCodecKey: codec], for: connection)
         Logger.camera.info("Movie output codec set to \(codec.rawValue, privacy: .public).")
+    }
+
+    /// Explicitly configures the app's shared `AVAudioSession` for simultaneous
+    /// microphone capture and live playback (used by `AudioMirror` to send
+    /// audio out an HDMI/USB adapter). Without this, the session's category is
+    /// left to whatever AVCaptureSession implicitly picks for recording alone,
+    /// which isn't guaranteed to also permit playback once a new audio route
+    /// (like HDMI) becomes active.
+    nonisolated private func configureAudioSession() {
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setCategory(
+                .playAndRecord,
+                mode: .videoRecording,
+                options: [.allowBluetoothA2DP, .defaultToSpeaker]
+            )
+            try audioSession.setActive(true)
+            Logger.camera.info("AVAudioSession configured for playAndRecord.")
+        } catch {
+            Logger.camera.error("Failed to configure AVAudioSession: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Wires an `AVCaptureDevice.RotationCoordinator` to the movie output's

@@ -60,12 +60,38 @@ enum OrientationLock {
 
 /// Minimal delegate whose sole job is to enforce the app-wide orientation
 /// restriction: Portrait + Landscape Left only, further narrowed to whichever
-/// single orientation is locked while recording.
+/// single orientation is locked while recording. It also hands UIKit a
+/// dedicated scene configuration for connected external displays, so a
+/// plugged-in monitor gets our own HDMI mirror content (via
+/// `ExternalDisplaySceneDelegate`) instead of the OS's default screen mirror.
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
         OrientationLock.isLocked ? OrientationLock.lockedMask : [.portrait, .landscapeLeft]
+    }
+
+    /// Without this, UIKit still creates a scene for a connected external
+    /// display, but fills it with a default mirror of the app's main screen
+    /// rather than invoking any of our own code — that default mirror is
+    /// exactly what was showing up on the monitor (including the record
+    /// button) instead of the intended HDMI camera preview.
+    func application(
+        _ application: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(
+            name: connectingSceneSession.configuration.name,
+            sessionRole: connectingSceneSession.role
+        )
+
+        if connectingSceneSession.role == .windowExternalDisplayNonInteractive {
+            Logger.externalDisplay.notice("Providing custom scene configuration for external display.")
+            configuration.delegateClass = ExternalDisplaySceneDelegate.self
+        }
+
+        return configuration
     }
 }

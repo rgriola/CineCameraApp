@@ -24,3 +24,8 @@ Background AVFoundation work : nonisolated method, called via sessionQueue.async
 Delegate callbacks → UI : DispatchQueue.main.async hop inside the nonisolated method
 
 - ask questions, do not over think this, keep the code as simple as AVFoundation can be.
+
+> > > Logger
+
+- use OSLog for the console, not print()
+- These should be used to display what is going on in the console.
