@@ -13,7 +13,7 @@ struct CameraPreview: UIViewRepresentable {
     let cameraManager: CameraManager
 
     func makeUIView(context: Context) -> PreviewUIView {
-        let view = PreviewUIView()
+        let view: CameraPreview.PreviewUIView = PreviewUIView()
         view.backgroundColor = .black
         view.setupPreviewLayer(session: session)
         if let device = cameraManager.videoDevice {

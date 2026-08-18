@@ -139,6 +139,16 @@ final class CameraManager: NSObject {
 
     var session: AVCaptureSession { cs.session }
 
+    /// Notifies observers whenever the orientation lock engages/releases
+    /// (i.e., recording starts/stops), so other consumers of the live camera
+    /// feed — like `ExternalDisplayController`'s HDMI mirror — can freeze and
+    /// unfreeze their own rotation in lockstep with the on-device preview.
+    /// `@ObservationIgnored` because this is a callback hook, not UI state —
+    /// `@Observable`'s macro can't synthesize tracking for a MainActor-typed
+    /// closure property.
+    @ObservationIgnored
+    var onOrientationLockChange: (@MainActor (Bool) -> Void)?
+
     /// The active video device, exposed so `CameraPreview` can build its own
     /// preview-specific `RotationCoordinator`. Only meaningful once the
     /// session has finished configuring (mirrors how `session` is exposed).
@@ -174,6 +184,7 @@ final class CameraManager: NSObject {
                 } else {
                     OrientationLock.unlock()
                 }
+                self?.onOrientationLockChange?(recording)
             }
         }
         cs.onSaveError = { [weak self] message in
