@@ -136,6 +136,28 @@ final class ExternalDisplayController: NSObject {
         previewLayer = layer
         hostView = view
 
+        // TEMPORARY DIAGNOSTIC — remove once confirmed. If the physical HDMI
+        // monitor shows this solid magenta card with the label text, this
+        // custom UIWindow IS what iOS is actually presenting on that screen,
+        // meaning any remaining chrome must come from somewhere in our own
+        // window. If the monitor instead still shows the full device screen
+        // (Dynamic Island, record button, SwiftUI UI) and NOT magenta, that
+        // proves iOS is bypassing this window entirely and doing default
+        // full-screen mirroring of the main scene — a presentation-routing
+        // problem, not a camera/preview-layer problem.
+        if Self.showDiagnosticCard {
+            let label = UILabel(frame: window.bounds)
+            label.text = "HDMI CUSTOM WINDOW\n(if you see this, the window IS live)"
+            label.textColor = .white
+            label.font = .boldSystemFont(ofSize: 40)
+            label.numberOfLines = 0
+            label.textAlignment = .center
+            let card = UIView(frame: window.bounds)
+            card.backgroundColor = .magenta
+            card.addSubview(label)
+            view.addSubview(card)
+        }
+
         CameraManager.shared.attachSecondaryPreviewLayer(layer) { [weak self] success in
             guard let self, self.previewLayer === layer else { return }
             guard success else {
@@ -148,6 +170,12 @@ final class ExternalDisplayController: NSObject {
 
         enableAudioMirroring()
     }
+
+    /// Temporary diagnostic switch — see the comment at its one call site in
+    /// `attach(to:)`. Set to `false` (or delete this whole block) once we've
+    /// confirmed whether the custom `UIWindow` is actually what's being
+    /// presented on the physical external display.
+    private static let showDiagnosticCard = true
 
     private func teardown() {
         disableAudioMirroring()
