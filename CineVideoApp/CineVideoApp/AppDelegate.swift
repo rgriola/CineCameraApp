@@ -60,18 +60,13 @@ enum OrientationLock {
 
 /// Minimal delegate whose sole job is to enforce the app-wide orientation
 /// restriction: Portrait + Landscape Right only, further narrowed to whichever
-/// single orientation is locked while recording. It also starts
-/// `ExternalDisplayController` observing for a connected HDMI/USB display as
-/// early as possible in the app's lifetime.
+/// single orientation is locked while recording.
+///
+/// The HDMI/external-display mirror no longer needs anything from this
+/// delegate — `ExternalDisplaySceneDelegate` (registered statically in
+/// `Info.plist`'s scene manifest) is what UIKit connects directly whenever an
+/// external display becomes available.
 final class AppDelegate: NSObject, UIApplicationDelegate {
-    func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-    ) -> Bool {
-        ExternalDisplayController.shared.start()
-        return true
-    }
-
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?

@@ -16,20 +16,26 @@ import OSLog
 /// so the HDMI feed always shows exactly "Preview + Recording" as originally
 /// specified, and freezes in lockstep with them once recording starts.
 ///
-/// Driven directly by `UIScreen.didConnectNotification`/`didDisconnectNotification`
-/// — the classic, pre-Scene-API mechanism (available since iOS 3.2). On-device
-/// testing confirmed the modern Scene-based external-display auto-connection
-/// (`UISceneSession.Role.windowExternalDisplayNonInteractive`) never actually
-/// requests a scene for a plain iPhone + USB‑C/HDMI adapter — that automatic
-/// behavior appears to be iPad/Stage-Manager-oriented, not general iPhone
-/// hardware. `UIScreen.didConnectNotification`, though deprecated since iOS 16
-/// in favor of the Scene mechanism, is still fully functional and was
-/// confirmed firing reliably with the correct external `UIScreen` in testing.
+/// Driven by the `UIWindowSceneSessionRoleExternalDisplayNonInteractive`
+/// scene role (`ExternalDisplaySceneDelegate` in this file's neighbor).
+/// Two things were required to get this to actually connect, confirmed via
+/// on-device testing:
 ///
-/// `UIWindow`/`UIScreen` have no SwiftUI equivalent for supplying independent
-/// content to a second physical display, so this stays an isolated, minimal
-/// UIKit bridge — the same category of interop as `CameraPreview`'s
-/// `UIViewRepresentable`.
+/// 1. A prior attempt to assign the role's delegate class *dynamically*,
+///    from `AppDelegate.application(_:configurationForConnecting:options:)`,
+///    never resulted in that method even being called for the external
+///    role — only ever for the app's own main scene. Declaring the
+///    configuration *statically* by name in the scene manifest (see
+///    `Info.plist`) is what actually gets `ExternalDisplaySceneDelegate`
+///    connected.
+/// 2. A classic pre-Scene-API fallback (`UIScreen.didConnectNotification` +
+///    a plain `UIWindow` with `window.screen` set directly) was tried and
+///    confirmed NOT to work on this iOS version: the window was created
+///    successfully and even received camera frames, but the physical HDMI
+///    output kept showing the system's own full-device mirror instead —
+///    modern UIKit routes presentation through a window's `UIWindowScene`,
+///    not the deprecated per-window `.screen` property, so a scene-less
+///    window is effectively inert for actual display output.
 @MainActor
 final class ExternalDisplayController: NSObject {
     static let shared = ExternalDisplayController()
@@ -45,70 +51,30 @@ final class ExternalDisplayController: NSObject {
     private weak var rotationDevice: AVCaptureDevice?
     private var isOrientationLocked = false
 
-    /// Begins observing for external displays. Call once, as early as
-    /// possible (from `AppDelegate.application(_:didFinishLaunchingWithOptions:)`),
-    /// so a display already connected at launch is picked up immediately, and
-    /// any later connect/disconnect is handled for the rest of the app's
-    /// lifetime.
-    func start() {
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(screenDidConnect),
-            name: UIScreen.didConnectNotification, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(screenDidDisconnect),
-            name: UIScreen.didDisconnectNotification, object: nil
-        )
-
-        // UIScreen.screens[0] is always the built-in display; anything after
-        // that is an external screen already connected before this method ran.
-        if let externalScreen = UIScreen.screens.dropFirst().first {
-            attachWhenReady(to: externalScreen)
-        }
-    }
-
-    @objc private func screenDidConnect(_ notification: Notification) {
-        guard let screen = notification.object as? UIScreen else { return }
-        Logger.externalDisplay.notice("External screen connected: \(screen.bounds.width, privacy: .public)x\(screen.bounds.height, privacy: .public).")
-        attachWhenReady(to: screen)
-    }
-
-    @objc private func screenDidDisconnect(_ notification: Notification) {
-        Logger.externalDisplay.notice("External screen disconnected.")
-        teardown()
-    }
-
     /// Waits for `CameraManager`'s capture session to finish configuring
     /// (i.e. `videoDevice` becomes non-nil) before creating the HDMI preview
-    /// layer at all. Building `AVCaptureVideoPreviewLayer(session:)` before
-    /// the session has any inputs — which was happening here, since a
-    /// display already connected at launch triggers this within
-    /// milliseconds, well before the async permission cascade finishes
-    /// configuring the session — left this preview layer without a working
-    /// connection, and was empirically found to also disrupt the on-device
-    /// `CameraPreview`'s own connection when both raced to attach to the
-    /// same not-yet-configured session.
-    private func attachWhenReady(to screen: UIScreen) {
+    /// layer at all. Building the layer against a session with no inputs yet
+    /// — which can easily happen since the external-display scene can
+    /// connect within milliseconds of launch, well before the async
+    /// permission cascade finishes configuring the session — previously left
+    /// this preview layer (and, in an earlier single-preview-layer design,
+    /// even the on-device `CameraPreview`'s own layer) without a working
+    /// connection.
+    func attachWhenReady(to windowScene: UIWindowScene) {
         guard CameraManager.shared.videoDevice != nil else {
             Logger.externalDisplay.notice("Session not configured yet; deferring HDMI attach.")
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
-                self?.attachWhenReady(to: screen)
+                self?.attachWhenReady(to: windowScene)
             }
             return
         }
-        attach(to: screen)
+        attach(to: windowScene)
     }
 
-    private func attach(to screen: UIScreen) {
-        let window = UIWindow(frame: screen.bounds)
-        // `UIWindow.screen` is deprecated in favor of the Scene-based
-        // `UIWindow(windowScene:)` initializer, but remains the only way to
-        // present a window on a screen iOS never assigns a Scene to (see the
-        // type-level comment above) — still fully functional as of iOS 26.
-        window.screen = screen
+    private func attach(to windowScene: UIWindowScene) {
+        let window = UIWindow(windowScene: windowScene)
         window.backgroundColor = .black
-        window.windowLevel = .normal
         window.isHidden = false
 
         // Deliberately NOT the auto-connecting `AVCaptureVideoPreviewLayer(session:)`
@@ -138,16 +104,13 @@ final class ExternalDisplayController: NSObject {
 
         // TEMPORARY DIAGNOSTIC — remove once confirmed. If the physical HDMI
         // monitor shows this solid magenta card with the label text, this
-        // custom UIWindow IS what iOS is actually presenting on that screen,
-        // meaning any remaining chrome must come from somewhere in our own
-        // window. If the monitor instead still shows the full device screen
-        // (Dynamic Island, record button, SwiftUI UI) and NOT magenta, that
-        // proves iOS is bypassing this window entirely and doing default
-        // full-screen mirroring of the main scene — a presentation-routing
-        // problem, not a camera/preview-layer problem.
+        // scene-backed UIWindow IS what iOS is actually presenting on that
+        // screen. If the monitor instead still shows the full device screen
+        // (Dynamic Island, record button, SwiftUI UI) and NOT magenta, the
+        // scene still isn't taking over display output.
         if Self.showDiagnosticCard {
             let label = UILabel(frame: window.bounds)
-            label.text = "HDMI CUSTOM WINDOW\n(if you see this, the window IS live)"
+            label.text = "HDMI SCENE WINDOW\n(if you see this, the scene IS live)"
             label.textColor = .white
             label.font = .boldSystemFont(ofSize: 40)
             label.numberOfLines = 0
@@ -165,7 +128,7 @@ final class ExternalDisplayController: NSObject {
                 return
             }
             self.attachRotationCoordinator(to: layer)
-            Logger.externalDisplay.notice("HDMI mirror window attached to external screen.")
+            Logger.externalDisplay.notice("HDMI mirror window attached to external-display scene.")
         }
 
         enableAudioMirroring()
@@ -173,11 +136,11 @@ final class ExternalDisplayController: NSObject {
 
     /// Temporary diagnostic switch — see the comment at its one call site in
     /// `attach(to:)`. Set to `false` (or delete this whole block) once we've
-    /// confirmed whether the custom `UIWindow` is actually what's being
+    /// confirmed whether the scene-backed `UIWindow` is actually what's being
     /// presented on the physical external display.
     private static let showDiagnosticCard = true
 
-    private func teardown() {
+    func teardown() {
         disableAudioMirroring()
         if let layer = previewLayer {
             CameraManager.shared.detachSecondaryPreviewLayer(layer)

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Hand-maintained supplement to Xcode's auto-generated Info.plist
+	(GENERATE_INFOPLIST_FILE = YES + INFOPLIST_FILE merges this file's keys
+	on top of the synthesized ones). This exists solely to declare a STATIC
+	scene configuration for the noninteractive external-display role, which
+	the `INFOPLIST_KEY_UIApplicationSceneManifest_Generation` auto-generation
+	flag cannot express (it only knows about the app's own SwiftUI `Scene`
+	body, not system-initiated roles like HDMI/USB display connections).
+
+	Per Apple's "Presenting content on a connected display" guide, the
+	external-display-noninteractive scene should auto-connect (pre-iOS 27)
+	once a delegate class is associated with its role — either dynamically,
+	via `application(_:configurationForConnecting:options:)`, or statically,
+	by name, right here. We're trying the static route since the dynamic
+	one alone did not result in the scene ever connecting on this hardware.
+	-->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleExternalDisplayNonInteractive</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>External Display Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).ExternalDisplaySceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -10,9 +10,22 @@
 		672F4D5E3034CD9600179958 /* CineVideoApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CineVideoApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		79423A7AC718E7144DAD56E2 /* Exceptions for "CineVideoApp" folder in "CineVideoApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 672F4D5D3034CD9600179958 /* CineVideoApp */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		672F4D603034CD9600179958 /* CineVideoApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				79423A7AC718E7144DAD56E2 /* Exceptions for "CineVideoApp" folder in "CineVideoApp" target */,
+			);
 			path = CineVideoApp;
 			sourceTree = "<group>";
 		};
@@ -256,12 +269,11 @@
 				DEVELOPMENT_TEAM = LW5P4PVL96;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CineVideoApp/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CineVideoApp needs camera access to record video.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "CineVideoApp needs microphone access to record audio with your video.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "CineVideoApp saves your recordings to your Photo Library.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UIApplicationSupportsMultipleScenes = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeRight";
@@ -296,12 +308,11 @@
 				DEVELOPMENT_TEAM = LW5P4PVL96;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CineVideoApp/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CineVideoApp needs camera access to record video.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "CineVideoApp needs microphone access to record audio with your video.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "CineVideoApp saves your recordings to your Photo Library.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UIApplicationSupportsMultipleScenes = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeRight";
