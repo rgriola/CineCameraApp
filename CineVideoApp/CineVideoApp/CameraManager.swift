@@ -116,16 +116,18 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         Logger.recording.notice("Recording finished: \(outputFileURL.lastPathComponent, privacy: .public)")
 
         // Recording has ended — release the orientation lock and immediately
-        // catch the connection up to wherever the device is currently held.
+        // catch the movie connection up to wherever the device is currently
+        // held. The HDMI connection is intentionally left untouched — it's
+        // permanently locked to landscape (see `lockHDMIToLandscape`), never
+        // tracking device orientation at all.
         isOrientationLocked = false
-        if let coordinator = captureRotationCoordinator {
-            let angle = coordinator.videoRotationAngleForHorizonLevelCapture
-            if let connection = movieOutput.connection(with: .video) {
-                connection.applyRotationAngle(angle, source: "Recording", device: videoDevice)
-            }
-            if let connection = videoDataOutput.connection(with: .video) {
-                connection.applyRotationAngle(angle, source: "HDMI", device: videoDevice)
-            }
+        if let coordinator = captureRotationCoordinator,
+           let connection = movieOutput.connection(with: .video) {
+            connection.applyRotationAngle(
+                coordinator.videoRotationAngleForHorizonLevelCapture,
+                source: "Recording",
+                device: videoDevice
+            )
         }
 
         onRecordingStateChange?(false)
@@ -470,6 +472,7 @@ final class CameraManager: NSObject {
         // Rotation coordination is set up after commitConfiguration so the
         // movie output's connection already exists.
         setupCaptureRotationCoordinator(cs: cs, device: videoDevice)
+        lockHDMIToLandscape(cs: cs)
 
         DispatchQueue.main.async { [weak self] in
             self?.videoDevice = cs.videoDevice
@@ -539,11 +542,12 @@ final class CameraManager: NSObject {
         }
     }
 
-    /// Wires an `AVCaptureDevice.RotationCoordinator` to both the movie
-    /// output's connection AND the video data output's connection (feeding
-    /// the HDMI mirror) so recorded video and the HDMI feed always match how
-    /// the device is held — and freeze together — unless
-    /// `cs.isOrientationLocked` is set (during an active recording).
+    /// Wires an `AVCaptureDevice.RotationCoordinator` to the movie output's
+    /// connection so recorded video always matches how the device is held —
+    /// and freezes — unless `cs.isOrientationLocked` is set (during an
+    /// active recording). The video data output's connection (feeding the
+    /// HDMI mirror) is deliberately NOT driven by this live coordinator —
+    /// see `lockHDMIToLandscape`.
     nonisolated private func setupCaptureRotationCoordinator(cs: CameraSession, device: AVCaptureDevice) {
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         cs.captureRotationCoordinator = coordinator
@@ -561,13 +565,20 @@ final class CameraManager: NSObject {
     }
 
     nonisolated private func applyRotationAngle(_ angle: CGFloat, cs: CameraSession) {
-        guard !cs.isOrientationLocked else { return }
-        if let connection = cs.movieOutput.connection(with: .video) {
-            connection.applyRotationAngle(angle, source: "Recording", device: cs.videoDevice)
-        }
-        if let connection = cs.videoDataOutput.connection(with: .video) {
-            connection.applyRotationAngle(angle, source: "HDMI", device: cs.videoDevice)
-        }
+        guard !cs.isOrientationLocked, let connection = cs.movieOutput.connection(with: .video) else { return }
+        connection.applyRotationAngle(angle, source: "Recording", device: cs.videoDevice)
+    }
+
+    /// Locks the HDMI mirror's connection to a fixed landscape angle, once,
+    /// at setup — it never changes again regardless of how the device is
+    /// held or rotated, matching how dedicated HDMI-monitoring camera apps
+    /// (e.g. Blackmagic Camera) behave: the external monitor always shows a
+    /// horizontal frame, since it's normally mounted/viewed independently of
+    /// however the operator is holding the phone. `0°` is this camera's
+    /// confirmed Landscape Right angle (see `RotationCorrection.swift`).
+    nonisolated private func lockHDMIToLandscape(cs: CameraSession) {
+        guard let connection = cs.videoDataOutput.connection(with: .video) else { return }
+        connection.applyRotationAngle(0, source: "HDMI", device: cs.videoDevice)
     }
 
     nonisolated private func performToggleRecording(cs: CameraSession) {

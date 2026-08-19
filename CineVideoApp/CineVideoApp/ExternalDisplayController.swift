@@ -12,16 +12,18 @@ import OSLog
 import os
 
 /// Mirrors the live camera session to an external display connected via a
-/// USB‑C/Lightning → HDMI adapter, matching whatever orientation the
-/// recording connection is currently using, and freezing in lockstep with it
-/// once recording starts — exactly as the original spec's safety net
-/// requires.
+/// USB‑C/Lightning → HDMI adapter. The HDMI feed is always shown horizontal
+/// (landscape), regardless of how the device is physically held or rotated —
+/// matching how dedicated HDMI-monitoring camera apps (e.g. Blackmagic
+/// Camera) behave, since an external monitor is normally mounted/viewed
+/// independently of the operator's grip. See
+/// `CameraManager.lockHDMIToLandscape`.
 ///
 /// Driven by the `UIWindowSceneSessionRoleExternalDisplayNonInteractive`
 /// scene role (`ExternalDisplaySceneDelegate` in this file's neighbor), fed
 /// by `CameraManager`'s `AVCaptureVideoDataOutput` via
 /// `AVSampleBufferDisplayLayer` rather than a second `AVCaptureVideoPreviewLayer`.
-/// Three things were required to get a genuinely clean HDMI feed working,
+/// Several things were required to get a genuinely clean HDMI feed working,
 /// each confirmed via on-device testing:
 ///
 /// 1. A prior attempt to assign the external-display scene role's delegate
@@ -45,10 +47,13 @@ import os
 ///    uses — confirmed on-device via `canAddConnection` returning false.
 ///    `AVCaptureVideoDataOutput` is a distinct output type with its own
 ///    connection/port, so it coexists cleanly with both the on-device
-///    preview and the movie file output; its delivered `CMSampleBuffer`s
-///    already carry the same rotation angle applied to the movie output's
-///    connection (`CameraManager.setupCaptureRotationCoordinator` drives
-///    both), so no separate rotation-coordinator logic is needed here.
+///    preview and the movie file output.
+/// 4. Frames were being delivered but dropped almost immediately after the
+///    first one or two — traced to `AVSampleBufferDisplayLayer`'s
+///    `controlTimebase` starting at time zero rather than synced to the
+///    host clock's actual current reading, causing it to think every
+///    incoming frame was scheduled far in the future and backing up its
+///    internal queue indefinitely (see `attach(to:)`'s timebase setup).
 @MainActor
 final class ExternalDisplayController: NSObject {
     static let shared = ExternalDisplayController()
@@ -84,11 +89,16 @@ final class ExternalDisplayController: NSObject {
         let displayLayer = AVSampleBufferDisplayLayer()
         displayLayer.videoGravity = .resizeAspect
         // Sample buffers from `AVCaptureVideoDataOutput` carry host-clock
-        // presentation timestamps; syncing the display layer's timebase to
-        // the host clock (running at real-time rate) is what makes each
-        // frame appear as soon as it arrives instead of queuing up against
-        // an unrelated default timeline.
+        // presentation timestamps reflecting actual device uptime. A fresh
+        // `CMTimebase` starts at time ZERO, not synced to its source clock's
+        // current reading (confirmed via Apple's docs) — left unset, the
+        // display layer would think every incoming frame is scheduled hours
+        // in the future relative to its own timeline, backing up its
+        // internal queue indefinitely. Explicitly setting the timebase's
+        // time to the host clock's current reading is what makes frames
+        // display as soon as they arrive instead of queuing forever.
         if let timebase = try? CMTimebase(sourceClock: CMClockGetHostTimeClock()) {
+            try? timebase.setTime(CMClockGetTime(CMClockGetHostTimeClock()))
             try? timebase.setRate(1.0)
             displayLayer.controlTimebase = timebase
         }
