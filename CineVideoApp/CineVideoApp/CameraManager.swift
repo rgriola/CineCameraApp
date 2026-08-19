@@ -10,15 +10,6 @@ import OSLog
 import Photos
 import SwiftUI
 
-/// Wraps a non-`Sendable` reference (e.g. a `CALayer` subclass) so it can be
-/// captured in a `@Sendable` closure for a single, deliberate cross-queue
-/// hop. Safe only when the caller follows the same discipline every other
-/// `nonisolated(unsafe)` value in this file does: access is manually
-/// serialized by convention, never actually touched concurrently.
-private struct UncheckedSendableBox<Value>: @unchecked Sendable {
-    let value: Value
-}
-
 // ---------------------------------------------------------------------------
 // CameraSession — plain NSObject that owns all AVFoundation objects.
 // No @Observable, no @MainActor isolation. Lives entirely on sessionQueue.
@@ -33,6 +24,15 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // access is already manually serialized by convention.
     nonisolated(unsafe) let session      = AVCaptureSession()
     nonisolated(unsafe) let movieOutput  = AVCaptureMovieFileOutput()
+    // Feeds the HDMI mirror (`ExternalDisplayController`) with raw frames.
+    // A normal (non-multicam) `AVCaptureSession` only supports ONE preview-
+    // layer connection per input port — confirmed on-device: manually adding
+    // a second `AVCaptureConnection(inputPort:videoPreviewLayer:)` for the
+    // same port `CameraPreview`'s auto-managed layer already uses failed
+    // `canAddConnection`. A video data output is a distinct output type with
+    // its own connection/port, so it can coexist with both the preview
+    // layer's auto-managed connection and the movie file output.
+    nonisolated(unsafe) let videoDataOutput = AVCaptureVideoDataOutput()
     nonisolated(unsafe) var videoInput:  AVCaptureDeviceInput?
     nonisolated(unsafe) var audioInput:  AVCaptureDeviceInput?
     nonisolated(unsafe) var videoDevice: AVCaptureDevice?
@@ -50,6 +50,21 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // Callbacks that push state back to the main actor.
     nonisolated(unsafe) var onRecordingStateChange: (@Sendable (Bool) -> Void)?
     nonisolated(unsafe) var onSaveError: (@Sendable (String) -> Void)?
+
+    // Forwards each frame delivered to `videoDataOutput` — set by
+    // `CameraManager.setVideoFrameHandler(_:)`, consumed by
+    // `ExternalDisplayController` to feed an `AVSampleBufferDisplayLayer`.
+    nonisolated(unsafe) var onVideoFrame: (@Sendable (CMSampleBuffer) -> Void)?
+}
+
+extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
+    nonisolated func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        onVideoFrame?(sampleBuffer)
+    }
 }
 
 extension CameraSession: AVCaptureFileOutputRecordingDelegate {
@@ -74,13 +89,14 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
         // Recording has ended — release the orientation lock and immediately
         // catch the connection up to wherever the device is currently held.
         isOrientationLocked = false
-        if let coordinator = captureRotationCoordinator,
-           let connection = movieOutput.connection(with: .video) {
-            connection.applyRotationAngle(
-                coordinator.videoRotationAngleForHorizonLevelCapture,
-                source: "Recording",
-                device: videoDevice
-            )
+        if let coordinator = captureRotationCoordinator {
+            let angle = coordinator.videoRotationAngleForHorizonLevelCapture
+            if let connection = movieOutput.connection(with: .video) {
+                connection.applyRotationAngle(angle, source: "Recording", device: videoDevice)
+            }
+            if let connection = videoDataOutput.connection(with: .video) {
+                connection.applyRotationAngle(angle, source: "HDMI", device: videoDevice)
+            }
         }
 
         onRecordingStateChange?(false)
@@ -254,76 +270,20 @@ final class CameraManager: NSObject {
         sessionQueue.async { work(session) }
     }
 
-    /// Manually attaches a second, simultaneous preview layer — used by
-    /// `ExternalDisplayController`'s HDMI mirror — to the capture session's
-    /// existing video input.
-    ///
-    /// `AVCaptureSession` only automatically manages ONE preview-layer
-    /// connection: the one `CameraPreview` creates via the convenience
-    /// initializer `AVCaptureVideoPreviewLayer(session:)`. Creating a
-    /// *second* preview layer that same way steals that single
-    /// auto-managed connection out from under the first layer — confirmed
-    /// on-device: the on-device preview's `connection` went nil the
-    /// instant the HDMI layer was created via that initializer, even after
-    /// the session was fully configured, and never recovered. Apple's
-    /// supported pattern for multiple simultaneous preview layers on one
-    /// input is to build each additional connection manually via
-    /// `AVCaptureConnection(inputPort:videoPreviewLayer:)` and add it to
-    /// the session explicitly — which is what this does, on `sessionQueue`,
-    /// wrapped in `beginConfiguration()`/`commitConfiguration()` like every
-    /// other session mutation. `completion` is always invoked on the main
-    /// actor, so callers can safely touch UI/`@Observable` state from it.
-    nonisolated func attachSecondaryPreviewLayer(
-        _ layer: AVCaptureVideoPreviewLayer,
-        completion: @escaping @MainActor @Sendable (Bool) -> Void
-    ) {
+    /// Registers (or clears, with `nil`) the callback that receives every
+    /// frame delivered to the session's `videoDataOutput` — this is how
+    /// `ExternalDisplayController`'s HDMI mirror gets pixels, since a normal
+    /// (non-multicam) `AVCaptureSession` can't give it a second, independent
+    /// preview-layer connection (see `videoDataOutput`'s doc comment on
+    /// `CameraSession`). Frames already carry the same rotation angle applied
+    /// to the movie output's connection (`setupCaptureRotationCoordinator`
+    /// drives both), so the HDMI feed always matches Recording's orientation
+    /// and freeze/unfreeze behavior with no separate rotation logic needed on
+    /// the receiving end. Invoked on `sessionQueue`, never the main actor —
+    /// callers must hop to main themselves before touching UI state.
+    nonisolated func setVideoFrameHandler(_ handler: (@Sendable (CMSampleBuffer) -> Void)?) {
         let cs = self.cs
-        // `AVCaptureVideoPreviewLayer` (a `CALayer`) isn't `Sendable`, but is
-        // safe to hand across this one hop: `sessionQueue` only reads it
-        // once, synchronously, to build a connection, and every caller only
-        // ever touches the layer itself back on the main actor — the same
-        // "manually serialized by convention" pattern `CameraSession` uses.
-        let box = UncheckedSendableBox(value: layer)
-        sessionQueue.async {
-            let layer = box.value
-            guard
-                let videoInput = cs.videoInput,
-                let port = videoInput.ports.first(where: { $0.mediaType == .video })
-            else {
-                Logger.camera.error("Cannot attach secondary preview layer: no video input port.")
-                Task { @MainActor in completion(false) }
-                return
-            }
-
-            let connection = AVCaptureConnection(inputPort: port, videoPreviewLayer: layer)
-
-            cs.session.beginConfiguration()
-            guard cs.session.canAddConnection(connection) else {
-                cs.session.commitConfiguration()
-                Logger.camera.error("Cannot add secondary preview connection.")
-                Task { @MainActor in completion(false) }
-                return
-            }
-            cs.session.addConnection(connection)
-            cs.session.commitConfiguration()
-
-            Task { @MainActor in completion(true) }
-        }
-    }
-
-    /// Removes a secondary preview layer's manually-created connection
-    /// (the counterpart to `attachSecondaryPreviewLayer`) — e.g. when the
-    /// HDMI display disconnects — so the session doesn't keep mutating a
-    /// deallocated layer.
-    nonisolated func detachSecondaryPreviewLayer(_ layer: AVCaptureVideoPreviewLayer) {
-        let cs = self.cs
-        let box = UncheckedSendableBox(value: layer)
-        sessionQueue.async {
-            guard let connection = box.value.connection else { return }
-            cs.session.beginConfiguration()
-            cs.session.removeConnection(connection)
-            cs.session.commitConfiguration()
-        }
+        sessionQueue.async { cs.onVideoFrame = handler }
     }
 
     // MARK: - Permission cascade (main actor)
@@ -431,10 +391,21 @@ final class CameraManager: NSObject {
                 Logger.camera.error("Cannot add movie output.")
                 cs.session.commitConfiguration(); return
             }
+            guard cs.session.canAddOutput(cs.videoDataOutput) else {
+                Logger.camera.error("Cannot add video data output.")
+                cs.session.commitConfiguration(); return
+            }
 
             cs.session.addInput(videoInput)
             cs.session.addInput(audioInput)
             cs.session.addOutput(cs.movieOutput)
+            cs.session.addOutput(cs.videoDataOutput)
+
+            // Discard late frames rather than queuing them — the HDMI mirror
+            // only ever wants the most current frame; buffering stale ones
+            // would just add latency to a "live" feed.
+            cs.videoDataOutput.alwaysDiscardsLateVideoFrames = true
+            cs.videoDataOutput.setSampleBufferDelegate(cs, queue: sessionQueue)
 
             cs.videoInput   = videoInput
             cs.audioInput   = audioInput
@@ -526,9 +497,11 @@ final class CameraManager: NSObject {
         }
     }
 
-    /// Wires an `AVCaptureDevice.RotationCoordinator` to the movie output's
-    /// connection so recorded video always matches how the device is held,
-    /// unless `cs.isOrientationLocked` is set (during an active recording).
+    /// Wires an `AVCaptureDevice.RotationCoordinator` to both the movie
+    /// output's connection AND the video data output's connection (feeding
+    /// the HDMI mirror) so recorded video and the HDMI feed always match how
+    /// the device is held — and freeze together — unless
+    /// `cs.isOrientationLocked` is set (during an active recording).
     nonisolated private func setupCaptureRotationCoordinator(cs: CameraSession, device: AVCaptureDevice) {
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         cs.captureRotationCoordinator = coordinator
@@ -546,8 +519,13 @@ final class CameraManager: NSObject {
     }
 
     nonisolated private func applyRotationAngle(_ angle: CGFloat, cs: CameraSession) {
-        guard !cs.isOrientationLocked, let connection = cs.movieOutput.connection(with: .video) else { return }
-        connection.applyRotationAngle(angle, source: "Recording", device: cs.videoDevice)
+        guard !cs.isOrientationLocked else { return }
+        if let connection = cs.movieOutput.connection(with: .video) {
+            connection.applyRotationAngle(angle, source: "Recording", device: cs.videoDevice)
+        }
+        if let connection = cs.videoDataOutput.connection(with: .video) {
+            connection.applyRotationAngle(angle, source: "HDMI", device: cs.videoDevice)
+        }
     }
 
     nonisolated private func performToggleRecording(cs: CameraSession) {
