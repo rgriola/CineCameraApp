@@ -55,6 +55,12 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // `CameraManager.setVideoFrameHandler(_:)`, consumed by
     // `ExternalDisplayController` to feed an `AVSampleBufferDisplayLayer`.
     nonisolated(unsafe) var onVideoFrame: (@Sendable (CMSampleBuffer) -> Void)?
+
+    // Diagnostic only — logs the first frame delivered (and periodically
+    // thereafter) so we can tell from Console output whether frames are
+    // actually reaching this delegate at all, independent of whatever the
+    // HDMI mirror does with them.
+    nonisolated(unsafe) var videoFrameLogCount = 0
 }
 
 extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -63,7 +69,22 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        videoFrameLogCount += 1
+        if videoFrameLogCount == 1 || videoFrameLogCount % 150 == 0 {
+            let hasHandler = onVideoFrame != nil
+            let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+            let size = imageBuffer.map { "\(CVPixelBufferGetWidth($0))x\(CVPixelBufferGetHeight($0))" } ?? "no image buffer"
+            Logger.externalDisplay.debug("VideoDataOutput frame #\(self.videoFrameLogCount, privacy: .public): \(size, privacy: .public), handlerAttached=\(hasHandler, privacy: .public).")
+        }
         onVideoFrame?(sampleBuffer)
+    }
+
+    nonisolated func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        Logger.externalDisplay.warning("VideoDataOutput dropped a frame.")
     }
 }
 

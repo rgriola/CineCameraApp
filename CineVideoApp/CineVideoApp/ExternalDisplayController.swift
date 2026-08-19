@@ -9,6 +9,7 @@ import UIKit
 @preconcurrency import AVFoundation
 import CoreMedia
 import OSLog
+import os
 
 /// Mirrors the live camera session to an external display connected via a
 /// USB‑C/Lightning → HDMI adapter, matching whatever orientation the
@@ -111,6 +112,7 @@ final class ExternalDisplayController: NSObject {
 
         subscribeToVideoFrames(renderer: displayLayer.sampleBufferRenderer)
         enableAudioMirroring()
+        logStatusShortly(displayLayer: displayLayer)
 
         Logger.externalDisplay.notice("HDMI mirror window attached to external-display scene.")
     }
@@ -123,8 +125,28 @@ final class ExternalDisplayController: NSObject {
     /// queue, no extra hop needed since the renderer is its own
     /// hardware-clocked queue).
     private func subscribeToVideoFrames(renderer: some AVQueuedSampleBufferRendering) {
+        let counter = OSAllocatedUnfairLock(initialState: 0)
         CameraManager.shared.setVideoFrameHandler { sampleBuffer in
             renderer.enqueue(sampleBuffer)
+            let count = counter.withLock { count -> Int in
+                count += 1
+                return count
+            }
+            if count == 1 || count % 150 == 0 {
+                Logger.externalDisplay.debug("HDMI renderer enqueue #\(count, privacy: .public).")
+            }
+        }
+    }
+
+    /// Temporary diagnostic — checks the display layer's render status a
+    /// couple seconds after attach, from the main actor (avoids capturing
+    /// the non-`Sendable` `AVSampleBufferDisplayLayer` in the per-frame
+    /// `sessionQueue` closure above).
+    private func logStatusShortly(displayLayer: AVSampleBufferDisplayLayer) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, self.displayLayer === displayLayer else { return }
+            Logger.externalDisplay.debug("HDMI display layer status=\(String(describing: displayLayer.status), privacy: .public), error=\(String(describing: displayLayer.error), privacy: .public), bounds=\(String(describing: displayLayer.bounds), privacy: .public).")
         }
     }
 
