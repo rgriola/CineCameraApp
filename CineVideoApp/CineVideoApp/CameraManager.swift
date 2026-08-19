@@ -61,6 +61,7 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // actually reaching this delegate at all, independent of whatever the
     // HDMI mirror does with them.
     nonisolated(unsafe) var videoFrameLogCount = 0
+    nonisolated(unsafe) var videoFrameDropCount = 0
 }
 
 extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -84,7 +85,14 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         didDrop sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        Logger.externalDisplay.warning("VideoDataOutput dropped a frame.")
+        // Throttled — logging every single drop was itself slow enough to
+        // starve this delegate's queue and cause more drops, a feedback loop
+        // discovered on-device before `videoDataOutputQueue` was split out
+        // from `sessionQueue`.
+        videoFrameDropCount += 1
+        if videoFrameDropCount == 1 || videoFrameDropCount % 150 == 0 {
+            Logger.externalDisplay.warning("VideoDataOutput dropped frame #\(self.videoFrameDropCount, privacy: .public).")
+        }
     }
 }
 
@@ -222,6 +230,17 @@ final class CameraManager: NSObject {
     // MARK: - Private
     private let cs           = CameraSession()
     private let sessionQueue = DispatchQueue(label: "camera.cinevideoapp.sessionQueue")
+
+    // Dedicated queue for the video data output's sample buffer delegate
+    // callback, deliberately separate from `sessionQueue`. Apple's own
+    // guidance is that this callback must stay lightweight and never
+    // contend with other session work — confirmed the hard way on-device:
+    // sharing `sessionQueue` between per-frame delivery (~30/sec) and
+    // configuration/rotation-update work caused near-continuous frame drops
+    // (`AVCaptureVideoDataOutput`'s `alwaysDiscardsLateVideoFrames` drops a
+    // frame whenever the delegate queue is still busy when the next one
+    // arrives).
+    private let videoDataOutputQueue = DispatchQueue(label: "camera.cinevideoapp.videoDataOutputQueue")
 
     override init() {
         super.init()
@@ -426,7 +445,9 @@ final class CameraManager: NSObject {
             // only ever wants the most current frame; buffering stale ones
             // would just add latency to a "live" feed.
             cs.videoDataOutput.alwaysDiscardsLateVideoFrames = true
-            cs.videoDataOutput.setSampleBufferDelegate(cs, queue: sessionQueue)
+            // Dedicated queue, NOT sessionQueue — see videoDataOutputQueue's
+            // doc comment.
+            cs.videoDataOutput.setSampleBufferDelegate(cs, queue: videoDataOutputQueue)
 
             cs.videoInput   = videoInput
             cs.audioInput   = audioInput
