@@ -7,6 +7,8 @@
 
 import OSLog
 
+// NOTE Turn on metadata in Xcode to see all this. 
+
 /// Centralized `Logger` instances, one per subsystem area, so Console.app
 /// filtering (by category) lines up with how the app is actually organized.
 /// All logs share the app's bundle identifier as the subsystem.
