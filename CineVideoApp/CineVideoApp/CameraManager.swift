@@ -91,8 +91,34 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         // from `sessionQueue`.
         videoFrameDropCount += 1
         if videoFrameDropCount == 1 || videoFrameDropCount % 150 == 0 {
-            Logger.externalDisplay.warning("VideoDataOutput dropped frame #\(self.videoFrameDropCount, privacy: .public).")
+            // The drop REASON is what distinguishes a benign startup/thermal
+            // congestion transient from a real bug:
+            //   • FrameWasLate   — the delegate queue was still busy when the
+            //     next frame arrived; with `alwaysDiscardsLateVideoFrames` this
+            //     is the expected way a low-latency monitor sheds load. Heavy
+            //     at launch (debugger + live log streaming + session spin-up),
+            //     should clear once the system settles.
+            //   • OutOfBuffers   — the capture buffer pool is exhausted because
+            //     something downstream is RETAINING sample buffers (e.g. the
+            //     display layer's renderer backing up, or a leak). This one
+            //     points at our code and warrants investigation.
+            //   • Discontinuity  — an upstream source hiccup; usually transient.
+            let reason = Self.dropReason(for: sampleBuffer)
+            Logger.externalDisplay.warning("VideoDataOutput dropped frame #\(self.videoFrameDropCount, privacy: .public), reason=\(reason, privacy: .public).")
         }
+    }
+
+    /// Reads the `DroppedFrameReason` attachment AVFoundation stamps on every
+    /// dropped sample buffer, mapping it to a short stable string for the log.
+    nonisolated private static func dropReason(for sampleBuffer: CMSampleBuffer) -> String {
+        guard let reason = CMGetAttachment(
+            sampleBuffer,
+            key: kCMSampleBufferAttachmentKey_DroppedFrameReason,
+            attachmentModeOut: nil
+        ) as? String else {
+            return "unknown"
+        }
+        return reason
     }
 }
 

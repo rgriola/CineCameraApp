@@ -15,5 +15,6 @@ struct CineVideoApp: App {
         WindowGroup {
             ContentView()
         }
+
     }
 }

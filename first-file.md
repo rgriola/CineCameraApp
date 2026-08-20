@@ -29,3 +29,21 @@ Delegate callbacks → UI : DispatchQueue.main.async hop inside the nonisolated 
 
 - use OSLog for the console, not print()
 - These should be used to display what is going on in the console.
+
+**_ Next Challenge _**
+Video is coming out of phone to the monitor is portrait mode. It is going to the monitor succesfully.
+
+I need horizontal video recorded and output also. In my original MVP I wanted landscape left and portrait determined by device orientation. Is this still possible or do we need to go with device setting?
+
+Preview Mirroring
+Camera Preview
+Recording
+
+BlackMagic makes a camera app, it has a clean HDMI output, I noticed it limits the monitoring to HD, and it always outputs the HDMI horizontally no matter the camera orientation.
+
+**_ Evaluate App Feature _**
+Our goal is to create a Video Camera App (with audio) that feeds clean video + audio through to an HDMI monitor out of an iPhone.
+
+We have hit a wall. We are able to HDMI output the Camera Preview through HDMI but it shows the entire App UI, rather than only the camera preview.
+
+I need a deeper look at how we can accomplisht this, what we may be missing. The WindowUI and UIScene method seems blocked by iOS or App or Both.

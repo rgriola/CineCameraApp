@@ -64,24 +64,24 @@ final class ExternalDisplayController: NSObject {
     private var hostView: MirrorDisplayView?
     private let audioMirror = AudioMirror()
 
-    /// Waits for `CameraManager`'s capture session to finish configuring
-    /// (i.e. `videoDevice` becomes non-nil) before creating the HDMI mirror
-    /// window at all — the external-display scene can connect within
-    /// milliseconds of launch, well before the async permission cascade
-    /// finishes configuring the session.
-    func attachWhenReady(to windowScene: UIWindowScene) {
-        guard CameraManager.shared.videoDevice != nil else {
-            Logger.externalDisplay.notice("Session not configured yet; deferring HDMI attach.")
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(500))
-                self?.attachWhenReady(to: windowScene)
-            }
-            return
-        }
-        attach(to: windowScene)
-    }
+    /// Presents the HDMI mirror window the instant the external-display scene
+    /// connects — unconditionally, and independent of whether the capture
+    /// session is ready yet.
+    ///
+    /// This ordering is load-bearing. iOS keeps showing its default
+    /// full-screen DEVICE MIRROR (the entire app UI) on the external display
+    /// until an app-owned `UIWindow` is presented on that scene and made key.
+    /// The earlier implementation gated window creation behind
+    /// `CameraManager.videoDevice != nil`, so any delay — or outright failure —
+    /// in the async permission/session-configuration cascade left that
+    /// full-UI mirror up: exactly the "HDMI shows the whole app UI" symptom.
+    /// The window is now created immediately (black until frames arrive); only
+    /// the video-frame + audio wiring waits for the session, in
+    /// `wireCaptureWhenReady()`.
+    func attach(to windowScene: UIWindowScene) {
+        // A scene reconnecting while one is already attached: start clean.
+        if externalWindow != nil { teardown() }
 
-    private func attach(to windowScene: UIWindowScene) {
         let window = UIWindow(windowScene: windowScene)
         window.backgroundColor = .black
         window.isHidden = false
@@ -120,11 +120,33 @@ final class ExternalDisplayController: NSObject {
         self.displayLayer = displayLayer
         hostView = view
 
+        Logger.externalDisplay.notice("HDMI mirror window presented; device mirroring stopped.")
+
+        // Window is up and the OS mirror is now replaced; attach the live feed
+        // as soon as the capture session has a configured video device.
+        wireCaptureWhenReady()
+        logStatusShortly(displayLayer: displayLayer)
+    }
+
+    /// Subscribes the presented display layer to the camera's video frames and
+    /// starts audio mirroring, retrying every 500 ms until `CameraManager`'s
+    /// session has finished configuring. Unlike the old approach, this never
+    /// blocks the window from appearing — it only fills an already-visible
+    /// (black) window with the live feed once it's available. Safe against
+    /// teardown: bails out if the window/layer has since been removed.
+    private func wireCaptureWhenReady() {
+        guard let displayLayer else { return } // torn down before the session was ready
+        guard CameraManager.shared.videoDevice != nil else {
+            Logger.externalDisplay.notice("HDMI window shown; awaiting capture session before wiring frames.")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                self?.wireCaptureWhenReady()
+            }
+            return
+        }
         subscribeToVideoFrames(renderer: displayLayer.sampleBufferRenderer)
         enableAudioMirroring()
-        logStatusShortly(displayLayer: displayLayer)
-
-        Logger.externalDisplay.notice("HDMI mirror window attached to external-display scene.")
+        Logger.externalDisplay.notice("HDMI live feed wired: video frames + audio mirroring active.")
     }
 
     /// Forwards every frame `CameraManager`'s video data output delivers
