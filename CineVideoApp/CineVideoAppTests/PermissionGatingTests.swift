@@ -43,7 +43,12 @@ struct PermissionGatingTests {
     /// Covers the AND logic of `isAuthorized`, the OR logic of
     /// `permissionsDenied`, the `.limited` photo-library special case, and the
     /// `.notDetermined` middle state (neither authorized nor denied).
-    static let scenarios: [Scenario] = [
+    ///
+    /// `nonisolated` so the `@Test(arguments:)` macro can read it when building
+    /// the parameterized cases — that happens outside the suite's `@MainActor`
+    /// isolation, and this is an immutable `Sendable` array, so opting it out is
+    /// safe (and required under Swift 6).
+    nonisolated static let scenarios: [Scenario] = [
         .init(name: "all authorized",
               camera: .authorized, microphone: .authorized, photoLibrary: .authorized,
               expectedAuthorized: true, expectedDenied: false),
