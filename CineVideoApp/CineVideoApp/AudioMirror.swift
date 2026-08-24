@@ -5,7 +5,7 @@
 //  Created by rgriola on 8/18/26.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import OSLog
 
 /// Taps the capture session's live audio and plays it back immediately

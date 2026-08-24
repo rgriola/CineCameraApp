@@ -17,11 +17,16 @@ import SwiftUI
 // ---------------------------------------------------------------------------
 
 private final class CameraSession: NSObject, @unchecked Sendable {
-    // `nonisolated(unsafe)` — these are only ever touched from sessionQueue
-    // (or from delegate callbacks, themselves invoked off-main by AVFoundation).
-    // Some AVFoundation types carry version-conditioned MainActor isolation in
-    // this SDK; this opts these stored properties out of that entirely, since
-    // access is already manually serialized by convention.
+    // `nonisolated(unsafe)` — these fields are not protected by the compiler;
+    // each is instead owned by exactly one serial queue and only ever touched
+    // there. Most are owned by `CameraManager.sessionQueue`; the frame-path
+    // fields (`onVideoFrame`, `videoFrameLogCount`, `videoFrameDropCount`) are
+    // owned by `videoDataOutputQueue` (the sample-buffer delegate's queue); the
+    // `onRecordingStateChange` / `onSaveError` hooks are set once before capture
+    // begins and only read afterward. Some AVFoundation types also carry
+    // version-conditioned MainActor isolation in this SDK; this opts these
+    // stored properties out of that entirely, since access is already manually
+    // serialized by convention.
     nonisolated(unsafe) let session      = AVCaptureSession()
     nonisolated(unsafe) let movieOutput  = AVCaptureMovieFileOutput()
     // Feeds the HDMI mirror (`ExternalDisplayController`) with raw frames.
@@ -54,6 +59,8 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // Forwards each frame delivered to `videoDataOutput` — set by
     // `CameraManager.setVideoFrameHandler(_:)`, consumed by
     // `ExternalDisplayController` to feed an `AVSampleBufferDisplayLayer`.
+    // Owned by `videoDataOutputQueue`: both the write (`setVideoFrameHandler`)
+    // and the read (`captureOutput`) happen on that one queue.
     nonisolated(unsafe) var onVideoFrame: (@Sendable (CMSampleBuffer) -> Void)?
 
     // Diagnostic only — logs the first frame delivered (and periodically
@@ -62,6 +69,18 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // HDMI mirror does with them.
     nonisolated(unsafe) var videoFrameLogCount = 0
     nonisolated(unsafe) var videoFrameDropCount = 0
+
+    /// The serial queue that owns the mutable fields above. `CameraManager`
+    /// injects its own `sessionQueue` here so delegate callbacks that
+    /// AVFoundation invokes on its *own* internal queues (e.g. the movie
+    /// recording finish handler) can funnel state mutations back onto the one
+    /// queue that owns them, instead of racing it.
+    nonisolated let sessionQueue: DispatchQueue
+
+    init(sessionQueue: DispatchQueue) {
+        self.sessionQueue = sessionQueue
+        super.init()
+    }
 }
 
 extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -141,19 +160,23 @@ extension CameraSession: AVCaptureFileOutputRecordingDelegate {
     ) {
         Logger.recording.notice("Recording finished: \(outputFileURL.lastPathComponent, privacy: .public)")
 
-        // Recording has ended — release the orientation lock and immediately
-        // catch the movie connection up to wherever the device is currently
-        // held. The HDMI connection is intentionally left untouched — it's
-        // permanently locked to landscape (see `lockHDMIToLandscape`), never
-        // tracking device orientation at all.
-        isOrientationLocked = false
-        if let coordinator = captureRotationCoordinator,
-           let connection = movieOutput.connection(with: .video) {
-            connection.applyRotationAngle(
-                coordinator.videoRotationAngleForHorizonLevelCapture,
-                source: "Recording",
-                device: videoDevice
-            )
+        // Release the orientation lock and catch the movie connection up to the
+        // device's current angle — funnelled onto `sessionQueue`, which owns
+        // `isOrientationLocked` and serializes capture-connection mutation,
+        // because this delegate callback runs on AVFoundation's own internal
+        // queue, not `sessionQueue`. The HDMI connection is intentionally left
+        // untouched — it's permanently locked to landscape (see
+        // `lockHDMIToLandscape`), never tracking device orientation at all.
+        sessionQueue.async { [self] in
+            isOrientationLocked = false
+            if let coordinator = captureRotationCoordinator,
+               let connection = movieOutput.connection(with: .video) {
+                connection.applyRotationAngle(
+                    coordinator.videoRotationAngleForHorizonLevelCapture,
+                    source: "Recording",
+                    device: videoDevice
+                )
+            }
         }
 
         onRecordingStateChange?(false)
@@ -256,8 +279,8 @@ final class CameraManager: NSObject {
     }
 
     // MARK: - Private
-    private let cs           = CameraSession()
     private let sessionQueue = DispatchQueue(label: "camera.cinevideoapp.sessionQueue")
+    private let cs: CameraSession
 
     // Dedicated queue for the video data output's sample buffer delegate
     // callback, deliberately separate from `sessionQueue`. Apple's own
@@ -271,6 +294,7 @@ final class CameraManager: NSObject {
     private let videoDataOutputQueue = DispatchQueue(label: "camera.cinevideoapp.videoDataOutputQueue")
 
     override init() {
+        cs = CameraSession(sessionQueue: sessionQueue)
         super.init()
 
         // Callbacks arrive from sessionQueue; hop to main to mutate @Observable state.
@@ -347,11 +371,19 @@ final class CameraManager: NSObject {
     /// to the movie output's connection (`setupCaptureRotationCoordinator`
     /// drives both), so the HDMI feed always matches Recording's orientation
     /// and freeze/unfreeze behavior with no separate rotation logic needed on
-    /// the receiving end. Invoked on `sessionQueue`, never the main actor —
-    /// callers must hop to main themselves before touching UI state.
+    /// the receiving end. The handler write is serialized on
+    /// `videoDataOutputQueue` (the same queue that reads it in `captureOutput`),
+    /// never the main actor.
     nonisolated func setVideoFrameHandler(_ handler: (@Sendable (CMSampleBuffer) -> Void)?) {
         let cs = self.cs
-        sessionQueue.async { cs.onVideoFrame = handler }
+        // Serialize the write on `videoDataOutputQueue` — the SAME queue the
+        // sample-buffer delegate reads `onVideoFrame` on (see `captureOutput`).
+        // Writing it on `sessionQueue` (a different queue) while frames were
+        // being delivered ~30/sec raced that read: `onVideoFrame` is a closure
+        // (a heap reference with ARC retain/release, not an atomic word), so a
+        // read racing the write could over-release or observe a torn pointer —
+        // an intermittent crash on HDMI connect/disconnect.
+        videoDataOutputQueue.async { cs.onVideoFrame = handler }
     }
 
     // MARK: - Permission cascade (main actor)

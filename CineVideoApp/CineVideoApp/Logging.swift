@@ -18,7 +18,7 @@ import OSLog
 /// MainActor isolation — they're called from sessionQueue and background
 /// delegate callbacks just as often as from the main actor.
 extension Logger {
-    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.rodczaro.CineVideoApp"
+    nonisolated private static let subsystem = Bundle.main.bundleIdentifier ?? "com.rodczaro.CineVideoApp"
 
     /// Capture session lifecycle: configuration, format/codec setup, rotation.
     nonisolated static let camera = Logger(subsystem: subsystem, category: "Camera")

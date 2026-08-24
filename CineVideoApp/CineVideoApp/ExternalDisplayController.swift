@@ -157,6 +157,16 @@ final class ExternalDisplayController: NSObject {
     /// queue, no extra hop needed since the renderer is its own
     /// hardware-clocked queue).
     private func subscribeToVideoFrames(renderer: some AVQueuedSampleBufferRendering) {
+        // `nonisolated(unsafe)` — the renderer is a non-`Sendable` class, but
+        // AVFoundation documents `enqueue(_:)` as safe to call from any thread,
+        // and this closure only ever runs serially on `CameraManager`'s
+        // `videoDataOutputQueue` (the one queue the frame handler runs on), so
+        // capturing it into the `@Sendable` closure below is sound. Typed as
+        // the concrete existential `any ...` (not the opaque `some`) so no
+        // opaque-metatype is captured across the isolation boundary.
+        // TODO(Swift 6): remove the unsafe capture if AVFoundation annotates
+        // these rendering APIs as `Sendable`.
+        nonisolated(unsafe) let renderer: any AVQueuedSampleBufferRendering = renderer
         let counter = OSAllocatedUnfairLock(initialState: 0)
         CameraManager.shared.setVideoFrameHandler { sampleBuffer in
             renderer.enqueue(sampleBuffer)
