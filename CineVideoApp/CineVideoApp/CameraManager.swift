@@ -282,6 +282,10 @@ final class CameraManager: NSObject {
     private let sessionQueue = DispatchQueue(label: "camera.cinevideoapp.sessionQueue")
     private let cs: CameraSession
 
+    /// Injected permission provider — real (`SystemPermissionsService`) in
+    /// production, a scripted stub in tests. See `PermissionsService`.
+    private let permissions: any PermissionsService
+
     // Dedicated queue for the video data output's sample buffer delegate
     // callback, deliberately separate from `sessionQueue`. Apple's own
     // guidance is that this callback must stay lightweight and never
@@ -293,7 +297,15 @@ final class CameraManager: NSObject {
     // arrives).
     private let videoDataOutputQueue = DispatchQueue(label: "camera.cinevideoapp.videoDataOutputQueue")
 
-    override init() {
+    convenience override init() {
+        self.init(permissions: SystemPermissionsService())
+    }
+
+    /// Designated initializer with an injectable `PermissionsService`. The
+    /// no-argument `override init()` (used by `shared`) supplies the real
+    /// system-backed service; tests pass a scripted stub.
+    init(permissions: any PermissionsService) {
+        self.permissions = permissions
         cs = CameraSession(sessionQueue: sessionQueue)
         super.init()
 
@@ -319,28 +331,23 @@ final class CameraManager: NSObject {
     // MARK: - Public API (called from main actor / UI)
 
     /// Kicks off the camera → microphone → photo library permission cascade.
-    /// Safe to call repeatedly (e.g. from `onAppear`); each stage no-ops once granted.
+    /// Safe to call repeatedly (e.g. from `onAppear`); each stage no-ops once
+    /// granted. Launches the async cascade; UI callers don't await it.
     func checkPermissions() {
-        cameraAuthStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        Task { await requestAllPermissions() }
+    }
 
-        switch cameraAuthStatus {
-        case .authorized:
-            Logger.permissions.info("Camera already authorized.")
-            checkMicrophonePermission()
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                DispatchQueue.main.async {
-                    Logger.permissions.notice("Camera permission request result: \(granted, privacy: .public)")
-                    self?.cameraAuthStatus = granted ? .authorized : .denied
-                    self?.checkMicrophonePermission()
-                }
-            }
-        case .denied, .restricted:
-            Logger.permissions.notice("Camera permission denied or restricted.")
-            checkMicrophonePermission() // refresh remaining statuses for the gate UI
-        @unknown default:
-            cameraAuthStatus = .denied
-        }
+    /// The permission cascade itself, `async` so it can be awaited
+    /// deterministically in tests. Resolves camera, then microphone, then photo
+    /// library — updating the matching `@Observable` status after each — and
+    /// finally starts the capture session if everything ended authorized. Each
+    /// stage runs even if an earlier one was denied, so the permission-gate UI
+    /// reflects every status (only session start is gated on full authorization).
+    func requestAllPermissions() async {
+        await resolveCameraPermission()
+        await resolveMicrophonePermission()
+        await resolvePhotoLibraryPermission()
+        startSessionIfAuthorized()
     }
 
     func toggleRecording() {
@@ -388,44 +395,50 @@ final class CameraManager: NSObject {
 
     // MARK: - Permission cascade (main actor)
 
-    private func checkMicrophonePermission() {
-        microphoneAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    private func resolveCameraPermission() async {
+        let status = permissions.cameraStatus()
+        cameraAuthStatus = status
+        switch status {
+        case .authorized:
+            Logger.permissions.info("Camera already authorized.")
+        case .notDetermined:
+            let granted = await permissions.requestCamera()
+            Logger.permissions.notice("Camera permission request result: \(granted, privacy: .public)")
+            cameraAuthStatus = granted ? .authorized : .denied
+        case .denied, .restricted:
+            Logger.permissions.notice("Camera permission denied or restricted.")
+        @unknown default:
+            cameraAuthStatus = .denied
+        }
+    }
 
-        switch microphoneAuthStatus {
+    private func resolveMicrophonePermission() async {
+        let status = permissions.microphoneStatus()
+        microphoneAuthStatus = status
+        switch status {
         case .authorized:
             Logger.permissions.info("Microphone already authorized.")
-            checkPhotoLibraryPermission()
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                DispatchQueue.main.async {
-                    Logger.permissions.notice("Microphone permission request result: \(granted, privacy: .public)")
-                    self?.microphoneAuthStatus = granted ? .authorized : .denied
-                    self?.checkPhotoLibraryPermission()
-                }
-            }
+            let granted = await permissions.requestMicrophone()
+            Logger.permissions.notice("Microphone permission request result: \(granted, privacy: .public)")
+            microphoneAuthStatus = granted ? .authorized : .denied
         case .denied, .restricted:
             Logger.permissions.notice("Microphone permission denied or restricted.")
-            checkPhotoLibraryPermission()
         @unknown default:
             microphoneAuthStatus = .denied
         }
     }
 
-    private func checkPhotoLibraryPermission() {
-        photoLibraryAuthStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-
-        switch photoLibraryAuthStatus {
+    private func resolvePhotoLibraryPermission() async {
+        let status = permissions.photoLibraryStatus()
+        photoLibraryAuthStatus = status
+        switch status {
         case .authorized, .limited:
             Logger.permissions.info("Photo Library already authorized (add-only).")
-            startSessionIfAuthorized()
         case .notDetermined:
-            PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
-                DispatchQueue.main.async {
-                    Logger.permissions.notice("Photo Library permission request result: \(String(describing: status), privacy: .public)")
-                    self?.photoLibraryAuthStatus = status
-                    self?.startSessionIfAuthorized()
-                }
-            }
+            let newStatus = await permissions.requestPhotoLibrary()
+            Logger.permissions.notice("Photo Library permission request result: \(String(describing: newStatus), privacy: .public)")
+            photoLibraryAuthStatus = newStatus
         case .denied, .restricted:
             Logger.permissions.notice("Photo Library permission denied or restricted.")
         @unknown default:
