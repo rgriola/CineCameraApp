@@ -29,19 +29,42 @@ Before proceeding with any task involving Swift code, SwiftUI views, UIKit views
 If the task does not involve any Swift or Apple platform code, proceed normally.
 
 
-swift-lead	Orchestrator. Routes tasks to the right specialists.
+>>>> BELOW TEXT FOR USER DO NOT READ <<<<<
+
+swift-lead	Orchestrator;
+Routes tasks to the right specialists.
 concurrency-specialist	Swift 6.2 strict concurrency, actors, Sendable, async/await.
-foundation-models-specialist	Apple Foundation Models (iOS 26+), @Generable, @Guide, tool calling.
+
+foundation-models-specialist;
+Apple Foundation Models (iOS 26+), @Generable, @Guide, tool calling.
 on-device-ai-architect	MLX Swift, llama.cpp, Core ML, device tier planning, multi-backend fallback.
-mobile-a11y-specialist	iOS/macOS accessibility, VoiceOver, Dynamic Type, focus management.
+
+mobile-a11y-specialist;
+iOS/macOS accessibility, VoiceOver, Dynamic Type, focus management.
 swiftui-specialist	Modern SwiftUI, @Observable, state management, NavigationStack.
-app-review-guardian	App Store review compliance, privacy manifests, IAP rules.
-testing-specialist	Swift Testing, XCTest, testable architecture.
-swift-security-specialist	Keychain, CryptoKit, biometric auth, ATS, certificate pinning.
+
+app-review-guardian;
+App Store review compliance, privacy manifests, IAP rules.
+
+testing-specialist;
+Swift Testing, XCTest, testable architecture.
+
+swift-security-specialist;
+Keychain, CryptoKit, biometric auth, ATS, certificate pinning.
 coreml-specialist	Core ML conversion, quantization, deployment.
 mlx-specialist	MLX Swift, MLXLLM, MLXVLM, GPU memory, LoRA.
-meta-glasses-sdk-specialist	Meta Wearables DAT, camera streaming, device pairing.
-swiftdata-specialist	SwiftData persistence, @Model, @Query, migration.
-visionos-specialist	visionOS, RealityKit, ARKit, immersive spaces.
-storekit-specialist	StoreKit 2, subscriptions, entitlement verification.
-performance-specialist	Instruments, MetricKit, hang detection, memory management.
+
+meta-glasses-sdk-specialist;
+Meta Wearables DAT, camera streaming, device pairing.
+
+swiftdata-specialist;
+SwiftData persistence, @Model, @Query, migration.
+
+visionos-specialist;
+visionOS, RealityKit, ARKit, immersive spaces.
+
+storekit-specialist;
+StoreKit 2, subscriptions, entitlement verification.
+
+performance-specialist;
+Instruments, MetricKit, hang detection, memory management.

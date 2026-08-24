@@ -57,24 +57,3 @@ Aug 24 2026
 
 Needs:
 USB-C hub behavior with simultaneous external display + USB microphone input
-
-HDMI mirror window torn down.
-Timestamp: 2026-08-24 14:35:01.464512-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-Audio mirror tap removed from session.
-Timestamp: 2026-08-24 14:35:01.698839-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #4350: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:02.458619-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #4500: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:07.464587-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #4650: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:12.464311-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #4800: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:17.464270-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #4950: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:22.463984-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #5100: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:27.463068-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #5250: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:32.462866-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
-VideoDataOutput frame #5400: 1920x1080, handlerAttached=false.
-Timestamp: 2026-08-24 14:35:37.462451-04:00 | Library: CineVideoApp.debug.dylib | Subsystem: com.rodczaro.CineVideoApp | Category: ExternalDisplay
