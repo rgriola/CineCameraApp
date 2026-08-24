@@ -15,6 +15,7 @@ struct ContentView: View {
             if cameraManager.isAuthorized {
                 cameraView
             } else {
+                // phone resource permissions.
                 PermissionsGateView(
                     cameraStatus: cameraManager.cameraAuthStatus,
                     microphoneStatus: cameraManager.microphoneAuthStatus,
@@ -40,6 +41,7 @@ struct ContentView: View {
         }
     }
 
+    // basic demo UI. This will change to its own view when we move to MVP
     private var cameraView: some View {
         ZStack(alignment: .bottom) {
             CameraPreview(

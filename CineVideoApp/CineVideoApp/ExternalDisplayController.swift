@@ -103,7 +103,7 @@ final class ExternalDisplayController: NSObject {
             displayLayer.controlTimebase = timebase
         }
 
-        let view = MirrorDisplayView(displayLayer: displayLayer)
+        let view: MirrorDisplayView = MirrorDisplayView(displayLayer: displayLayer)
         view.backgroundColor = .black
         view.frame = window.bounds
 

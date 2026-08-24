@@ -37,6 +37,7 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
+        // The Coordinator object acts as the intermediary that listens to UIKit events and updates SwiftUI state variables.
         Coordinator(cameraManager: cameraManager)
     }
 

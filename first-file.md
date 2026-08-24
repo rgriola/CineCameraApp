@@ -42,8 +42,15 @@ Recording
 BlackMagic makes a camera app, it has a clean HDMI output, I noticed it limits the monitoring to HD, and it always outputs the HDMI horizontally no matter the camera orientation.
 
 **_ Evaluate App Feature _**
-Our goal is to create a Video Camera App (with audio) that feeds clean video + audio through to an HDMI monitor out of an iPhone. Blackmagic Camera App does the Video part but not the audio. 
+Our goal is to create a Video Camera App (with audio) that feeds clean video + audio through to an HDMI monitor out of an iPhone. Blackmagic Camera App does the Video part but not the audio.
 
-We have hit a wall. We are able feed USB/HDMI output of the Camera Preview through HDMI but it shows the entire App UI, rather than only the camera preview. 
+We have hit a wall. We are able feed USB/HDMI output of the Camera Preview through HDMI but it shows the entire App UI, rather than only the camera preview.
 
-I need a deeper look at how we can accomplish this, what we may be missing. The WindowUI and UIScene method seems blocked by iOS or App or Both. There is also a theory a second Window Group in the main startup file could be used to feed this external monitor. 
+I need a deeper look at how we can accomplish this, what we may be missing. The WindowUI and UIScene method seems blocked by iOS or App or Both. There is also a theory a second Window Group in the main startup file could be used to feed this external monitor.
+
+Aug 24 2026
+**_ Task _**
+
+- How do we add camera controls and bubble options to the UI Chrome?
+- How do we handle camera control UI rotation?
+- How do we auto choose audio ie; default Camera Mic, Plugged in USB, Bluetooth Mic (headphones)

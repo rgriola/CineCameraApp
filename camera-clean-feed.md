@@ -1,7 +1,7 @@
 # Clean HDMI Feed (Video + Audio) — Diagnosis & Fix Plan
 
 **App:** CineVideoApp (SwiftUI + AVFoundation, iOS 18 deployment target, built with Xcode 26 / iOS 26.5 SDK)
-**Goal:** Feed a *clean* camera image (no app UI) plus camera-mic audio out of an iPhone over a USB‑C/Lightning → HDMI adapter, the way Blackmagic Camera does for video — but with audio too.
+**Goal:** Feed a _clean_ camera image (no app UI) plus camera-mic audio out of an iPhone over a USB‑C/Lightning → HDMI adapter, the way Blackmagic Camera does for video — but with audio too.
 **Status:** Resolved. On-device, untethered: clean camera-only image on HDMI, live camera-mic audio, HDMI window appears immediately on launch/relaunch. A brief startup lag self-heals to a locked 30 fps.
 
 ---
@@ -30,8 +30,8 @@ So the capture/render/audio pipeline was sound. The problem was elsewhere.
 
 ### 3a. Platform reality (researched against current Apple docs)
 
-- iPhone **does** support presenting *separate, non-mirrored* content to an external display — but only through the **`windowExternalDisplayNonInteractive`** scene role (non-interactive = no touch on the external screen, which is fine for a monitor feed). This is the same mechanism Blackmagic uses for its clean feed.
-- **Mirroring is the default fallback.** iOS keeps showing its full-screen *device mirror* (the whole app UI) on the external display until the app **presents its own `UIWindow` on that external `UIWindowScene` and calls `makeKeyAndVisible()`**. No app window on the scene → mirror stays up. That is exactly the "HDMI shows the entire app UI" symptom.
+- iPhone **does** support presenting _separate, non-mirrored_ content to an external display — but only through the **`windowExternalDisplayNonInteractive`** scene role (non-interactive = no touch on the external screen, which is fine for a monitor feed). This is the same mechanism Blackmagic uses for its clean feed.
+- **Mirroring is the default fallback.** iOS keeps showing its full-screen _device mirror_ (the whole app UI) on the external display until the app **presents its own `UIWindow` on that external `UIWindowScene` and calls `makeKeyAndVisible()`**. No app window on the scene → mirror stays up. That is exactly the "HDMI shows the entire app UI" symptom.
 - **SwiftUI `WindowGroup` cannot target an external display on iPhone** (multi-window only extends on macOS/iPadOS). Theory #2 is a dead end; the UIKit scene-delegate route is the only supported path. (SwiftUI content can still be surfaced inside the external window via `UIHostingController` if overlays are ever wanted.)
 - **iOS 27+ behavioral change:** the static `UISceneConfigurations` manifest no longer auto-connects the external-display scene; the app must call `registerSceneAccessory(_:)` from a live view controller and keep the returned registration alive. On iOS ≤ 26 the Info.plist manifest still auto-connects, so both mechanisms must coexist.
 
@@ -83,7 +83,7 @@ Untethered testing confirmed the expected improvement: HDMI window appears immed
 
 ### What it is (confirmed on device)
 
-- Every startup drop logs `reason=FrameWasLate` — **never `OutOfBuffers`**. This is the *benign* reason: with `alwaysDiscardsLateVideoFrames = true`, a frame that arrives while the delegate queue is still busy is discarded rather than queued. So the transient shows up as briefly reduced fps, **not** accumulating latency, and it is **not** a buffer-retention/leak bug (which would log `OutOfBuffers`).
+- Every startup drop logs `reason=FrameWasLate` — **never `OutOfBuffers`**. This is the _benign_ reason: with `alwaysDiscardsLateVideoFrames = true`, a frame that arrives while the delegate queue is still busy is discarded rather than queued. So the transient shows up as briefly reduced fps, **not** accumulating latency, and it is **not** a buffer-retention/leak bug (which would log `OutOfBuffers`).
 - Drops occur even before the HDMI handler attaches (`handlerAttached=false`), so they are **not** caused by app-side per-frame work — the bottleneck is system-level resource contention during launch.
 - The feed reliably self-heals to a **measured 30.00 fps** (150 frames per 5.000 s) with zero drops, and holds there indefinitely.
 - Observed transient length varied roughly 30–90 s across runs, correlating with how much observation overhead was active (Xcode debugger and/or live `log stream`/Console.app).
@@ -99,7 +99,7 @@ Untethered testing confirmed the expected improvement: HDMI window appears immed
 The feature is ship-ready as-is; these are levers to shorten the warm-up, not fixes for a defect:
 
 - **Measure untethered first.** Before tuning anything, confirm the real (icon-launch, no log streaming) transient length — it is materially shorter than the tethered logs suggest. Don't optimize against the debugger's overhead.
-- **Defer non-essential startup work.** Attach the audio-mirror tap and the rotation-coordinator KVO a beat *after* the first HDMI frames are flowing, so the initial pipeline warm-up isn't competing with them.
+- **Defer non-essential startup work.** Attach the audio-mirror tap and the rotation-coordinator KVO a beat _after_ the first HDMI frames are flowing, so the initial pipeline warm-up isn't competing with them.
 - **Gate the per-150-frame `.debug`/`.warning` frame logs behind `#if DEBUG`** so the shipping (Release) build carries zero per-frame logging overhead. (Deliberately left in for now at the owner's request.)
 - **Consider a lower-cost HDMI tap during warm-up** if ever needed — e.g. `AVCaptureVideoDataOutput.deliversPreviewSizedOutputBuffers` or a reduced tap resolution — trading external-display sharpness for fewer late frames. Not currently warranted, since it settles clean at full 1080p30.
 - **Keep `alwaysDiscardsLateVideoFrames = true`.** For a live monitor, shedding late frames (brief fps dip) is preferable to queuing them (growing latency). Do not switch this to `false` to "save" the dropped frames.
