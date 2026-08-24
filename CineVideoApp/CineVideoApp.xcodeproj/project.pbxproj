@@ -6,7 +6,18 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		67194CBF303CF06D00E9275E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 672F4D563034CD9600179958 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 672F4D5D3034CD9600179958;
+			remoteInfo = CineVideoApp;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		67194CBB303CF06D00E9275E /* CineVideoAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CineVideoAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		672F4D5E3034CD9600179958 /* CineVideoApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CineVideoApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -21,6 +32,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		67194CBC303CF06D00E9275E /* CineVideoAppTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CineVideoAppTests;
+			sourceTree = "<group>";
+		};
 		672F4D603034CD9600179958 /* CineVideoApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -32,6 +48,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		67194CB8303CF06D00E9275E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		672F4D5B3034CD9600179958 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -46,6 +69,7 @@
 			isa = PBXGroup;
 			children = (
 				672F4D603034CD9600179958 /* CineVideoApp */,
+				67194CBC303CF06D00E9275E /* CineVideoAppTests */,
 				672F4D5F3034CD9600179958 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				672F4D5E3034CD9600179958 /* CineVideoApp.app */,
+				67194CBB303CF06D00E9275E /* CineVideoAppTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -61,6 +86,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		67194CBA303CF06D00E9275E /* CineVideoAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 67194CC3303CF06D00E9275E /* Build configuration list for PBXNativeTarget "CineVideoAppTests" */;
+			buildPhases = (
+				67194CB7303CF06D00E9275E /* Sources */,
+				67194CB8303CF06D00E9275E /* Frameworks */,
+				67194CB9303CF06D00E9275E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				67194CC0303CF06D00E9275E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				67194CBC303CF06D00E9275E /* CineVideoAppTests */,
+			);
+			name = CineVideoAppTests;
+			packageProductDependencies = (
+			);
+			productName = CineVideoAppTests;
+			productReference = 67194CBB303CF06D00E9275E /* CineVideoAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		672F4D5D3034CD9600179958 /* CineVideoApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 672F4D693034CD9800179958 /* Build configuration list for PBXNativeTarget "CineVideoApp" */;
@@ -93,6 +141,10 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					67194CBA303CF06D00E9275E = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 672F4D5D3034CD9600179958;
+					};
 					672F4D5D3034CD9600179958 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -113,11 +165,19 @@
 			projectRoot = "";
 			targets = (
 				672F4D5D3034CD9600179958 /* CineVideoApp */,
+				67194CBA303CF06D00E9275E /* CineVideoAppTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		67194CB9303CF06D00E9275E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		672F4D5C3034CD9600179958 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -128,6 +188,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		67194CB7303CF06D00E9275E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		672F4D5A3034CD9600179958 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -137,7 +204,59 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		67194CC0303CF06D00E9275E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 672F4D5D3034CD9600179958 /* CineVideoApp */;
+			targetProxy = 67194CBF303CF06D00E9275E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		67194CC1303CF06D00E9275E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW5P4PVL96;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rodczaro.CineVideoAppTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CineVideoApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CineVideoApp";
+			};
+			name = Debug;
+		};
+		67194CC2303CF06D00E9275E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW5P4PVL96;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rodczaro.CineVideoAppTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CineVideoApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CineVideoApp";
+			};
+			name = Release;
+		};
 		672F4D673034CD9800179958 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -340,6 +459,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		67194CC3303CF06D00E9275E /* Build configuration list for PBXNativeTarget "CineVideoAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				67194CC1303CF06D00E9275E /* Debug */,
+				67194CC2303CF06D00E9275E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		672F4D593034CD9600179958 /* Build configuration list for PBXProject "CineVideoApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
