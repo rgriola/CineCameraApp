@@ -544,18 +544,28 @@ final class CameraManager: NSObject {
     nonisolated private func applyCineHDFormat(to device: AVCaptureDevice) {
         let targetFrameRate = 30.0
 
-        let matchingFormat = device.formats.first { format in
+        // Map the device's real formats to value descriptors, then defer the
+        // pick to the pure `CineHDFormatSelector` (unit-tested in isolation).
+        let descriptors = device.formats.map { format -> CaptureFormatDescriptor in
             let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            let supportsFrameRate = format.videoSupportedFrameRateRanges.contains { range in
-                range.minFrameRate <= targetFrameRate && targetFrameRate <= range.maxFrameRate
+            let ranges = format.videoSupportedFrameRateRanges.map {
+                $0.minFrameRate...$0.maxFrameRate
             }
-            return dimensions.width == 1920 && dimensions.height == 1080 && supportsFrameRate
+            return CaptureFormatDescriptor(
+                width: dimensions.width,
+                height: dimensions.height,
+                frameRateRanges: ranges
+            )
         }
 
-        guard let format = matchingFormat else {
+        guard let index = CineHDFormatSelector.selectIndex(
+            in: descriptors, targetFrameRate: targetFrameRate
+        ) else {
             Logger.camera.warning("No exact 1920x1080@30 format found on this device; using default format.")
             return
         }
+
+        let format = device.formats[index]
 
         do {
             try device.lockForConfiguration()
@@ -573,8 +583,7 @@ final class CameraManager: NSObject {
     /// to H.264 only if the device genuinely can't encode HEVC.
     nonisolated private func applyHEVCCodec(cs: CameraSession) {
         guard let connection = cs.movieOutput.connection(with: .video) else { return }
-        let availableCodecs = cs.movieOutput.availableVideoCodecTypes
-        let codec: AVVideoCodecType = availableCodecs.contains(.hevc) ? .hevc : .h264
+        let codec = CodecSelector.select(from: cs.movieOutput.availableVideoCodecTypes)
         cs.movieOutput.setOutputSettings([AVVideoCodecKey: codec], for: connection)
         Logger.camera.info("Movie output codec set to \(codec.rawValue, privacy: .public).")
     }
@@ -656,9 +665,7 @@ final class CameraManager: NSObject {
         // net covering camera preview, recording, and HDMI output together.
         cs.isOrientationLocked = true
 
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("mov")
+        let outputURL = RecordingURL.makeTemporaryMovieURL()
 
         cs.movieOutput.startRecording(to: outputURL, recordingDelegate: cs)
     }
