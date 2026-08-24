@@ -41,6 +41,7 @@ on-device-ai-architect	MLX Swift, llama.cpp, Core ML, device tier planning, mult
 
 mobile-a11y-specialist;
 iOS/macOS accessibility, VoiceOver, Dynamic Type, focus management.
+
 swiftui-specialist	Modern SwiftUI, @Observable, state management, NavigationStack.
 
 app-review-guardian;
@@ -51,8 +52,12 @@ Swift Testing, XCTest, testable architecture.
 
 swift-security-specialist;
 Keychain, CryptoKit, biometric auth, ATS, certificate pinning.
-coreml-specialist	Core ML conversion, quantization, deployment.
-mlx-specialist	MLX Swift, MLXLLM, MLXVLM, GPU memory, LoRA.
+
+coreml-specialist;
+Core ML conversion, quantization, deployment.
+
+mlx-specialist;
+MLX Swift, MLXLLM, MLXVLM, GPU memory, LoRA.
 
 meta-glasses-sdk-specialist;
 Meta Wearables DAT, camera streaming, device pairing.

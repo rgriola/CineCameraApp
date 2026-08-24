@@ -51,9 +51,13 @@ I need a deeper look at how we can accomplish this, what we may be missing. The 
 Aug 24 2026
 **_ Task _**
 
-- How do we add camera controls and bubble options to the UI Chrome?
-- How do we handle camera control UI rotation?
-- How do we auto choose audio ie; default Camera Mic, Plugged in USB, Bluetooth Mic (headphones)
+To-Do
+
+- Add external audio support modeled after promptcam. Have agents review promptcam to make sure audio model is best practive. UI does not let me choose input.
+
+- Review SWIFT_STRICT_CONCURRENCY and how to set this.
+
+- Add icon so its not annoying.
 
 Needs:
 USB-C hub behavior with simultaneous external display + USB microphone input
