@@ -7,3 +7,5 @@ DerivedData/
 
 # Local, per-developer code-signing overrides (see Signing.local.xcconfig.example)
 Signing.local.xcconfig
+
+Assets/

@@ -5,13 +5,18 @@ Aug 21 Plan Update:
 ## Achieved
 
 - Clean HD 1920x1080p 30fps (w/Camera Audio) HDMI output, Monitor Confirmed;
-  Note: App takes about 2 mins to stabilize video output, Landscape output only. We abandoned dynamic landscape/portrait change for HDMI output. This is based on similar apps features as being too difficult to engineer at this stage.
+- Sept 9 Confirmed External Mic works with HDMI output.
+  Note: App takes about 2 mins to stabilize video output, Landscape output only.
 
-- Video Recording with one record button, no other UI in HD; Photo Library + Adobe Premerie playback confirmed.
+  Using Mokin USB Adpater provides USB Power input + USB Utility input for External Mic + HDMI Output for video signal.
+
+  > > We abandoned dynamic landscape/portrait change for HDMI output. This is based on similar apps features as being too difficult to engineer at this stage.<<
+
+- Video Recording with one record button, no other UI in HD; Photo Library + Adobe Premiere playback confirmed.
 
 - for MVP We are focusing on HD with camera controls to be built out further as product evolves.
 
-## Narrower MVP Adjustment
+## Narrower MVP Adjustment.
 
 - Audio follows Video default HD 1920x1080 30p
   Record Formats UHD 3840x2160 24, 30p; HD 1920x1080 24, 30p + Cine Versions
