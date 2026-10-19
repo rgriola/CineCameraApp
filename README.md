@@ -41,6 +41,7 @@ CineCameraApp/
 ├── mvp-plan.md               # Original feature plan, phased implementation steps, decisions
 ├── camera-clean-feed.md      # HDMI clean-feed bug diagnosis + fix writeup (see "Known Limitations")
 ├── di-refactor.md            # Dependency-injection refactor plan for unit-testability (Phase 0 + 1 done)
+├── camera-controls-plan.md   # Phased plan for camera/format controls: HD-4K, 24p/30p, zoom, focus, exposure
 ├── first-file.md             # Original task brief + concurrency "mental model"
 └── CineVideoApp/
     ├── CineVideoApp.xcodeproj
@@ -112,9 +113,10 @@ Note: the DI refactor (`di-refactor.md`) deliberately stopped after Phase 1 (pur
 
 - **HDMI clean feed — resolved, with a caveat.** The app previously had a bug where the external display showed the entire app UI (the OS's default device mirror) instead of a clean camera image (see `camera-clean-feed.md`). This has been **fixed**: `ExternalDisplayController` now presents the external window immediately on scene-connect, decoupled from capture-session readiness. A residual, benign startup frame-drop transient (`FrameWasLate`, self-heals to 30fps) remains but is not a recurrence of the original bug.
 - **No dynamic orientation on HDMI output.** The HDMI mirror's rotation angle is set once, to a fixed landscape value, and never updates — the team explicitly abandoned trying to make the external feed follow device rotation live, judging it too difficult to engineer at this stage (matches how Blackmagic Camera's HDMI output behaves).
+- **HDMI output is always 1080p — by design, not a bug.** The external monitor feed is fixed at 1920×1080 and will **remain 1080p even once 4K recording is added** (see `camera-controls-plan.md`, decision D4). It is deliberately decoupled from the selected record format and is not user-configurable. Together with the fixed-landscape rotation above, this defines the HDMI feed as a *stable monitoring signal* independent of what the recording is doing — the same tradeoff Blackmagic Camera makes, and a deliberate protection for a frame-delivery path that already shows drop pressure (`FrameWasLate`/`OutOfBuffers`) at 1080p. Please do not "fix" this to track the record resolution.
 - **Orientation support is Portrait + Landscape Right only**, locked for the duration of any recording (preview, recording, and the app's own UIKit orientation mask all freeze together, then catch back up when recording stops). Note: `mvp-plan.md`'s original plan called for Landscape **Left**, but the shipped `Info.plist`/`AppDelegate` configuration actually locks to Landscape **Right**.
-- **No camera switching** — back wide-angle camera only; no front-camera flip, no lens/zoom picker.
-- **No manual capture controls** — no exposure/shutter/ISO adjustment or lock, no STANDARD/CINE mode toggle, no HD/UHD or 24p/30p toggle. Recording format is hard-locked to 1920×1080 @ 30p H.265. These are documented as future work in `mvp-plan.md`, not yet implemented.
+- **No camera switching** — back wide-angle camera only; no front-camera flip, no lens/zoom picker. Note the active device is `.builtInWideAngleCamera`, a *single-lens* device on which zoom across focal lengths is impossible; adding zoom requires moving to a virtual multi-lens device (`camera-controls-plan.md`, decision D2).
+- **No manual capture controls** — no exposure/shutter/ISO adjustment or lock, no STANDARD/CINE mode toggle, no HD/UHD or 24p/30p toggle. Recording format is hard-locked to 1920×1080 @ 30p H.265. A phased plan to add format, frame-rate, zoom, focus, and exposure controls is written up in `camera-controls-plan.md` (ISO/shutter deferred to a later phase); not yet implemented.
 - **No external/USB microphone selection UI** — the app always plays back/records through the system's current default audio route; it cannot detect or let the user pick a specific external mic (e.g. DJI Mic, Rode). Explicitly called out as a to-do.
 - **`SWIFT_STRICT_CONCURRENCY` has not been reviewed/configured** — an open item from `mvp-plan.md`.
 - **Default/placeholder app icon** — a real app icon has not been added yet.
@@ -130,8 +132,10 @@ Pulled from the "To-Do" / "Needs" sections of `mvp-plan.md`, `camera-clean-feed.
 - [ ] Review and explicitly configure `SWIFT_STRICT_CONCURRENCY`.
 - [ ] Add a real app icon.
 - [ ] Confirm USB-C hub behavior for simultaneous external display + USB microphone input.
-- [ ] Camera controls: STANDARD/CINE mode toggle, HD/UHD + 24p/30p format toggle, exposure/shutter/ISO adjustment and lock.
-- [ ] Additional record formats beyond the current 1080p30 lock: UHD 3840×2160 @24/30p, HD 1920×1080 @24p, plus Cine variants (HDMI output would remain fixed at HD 30p regardless).
+- [ ] Camera controls: HD/4K format toggle, 24p/30p frame rate, zoom, focus/AF toggle, exposure/AE + EV bias — phased plan in `camera-controls-plan.md` (Phase 0 = pure testable policy, no behavior change).
+- [ ] Camera controls, later phase: manual ISO + shutter speed (`setExposureModeCustom`), plus a STANDARD/CINE mode toggle.
+- [ ] Move the capture device from `.builtInWideAngleCamera` to a virtual multi-lens device (triple → dual-wide → dual → wide fallback chain) as a prerequisite for zoom — note this requires pinning the initial zoom factor to the 1× anchor so framing doesn't silently regress to 0.5× ultra-wide.
+- [ ] Additional record formats beyond the current 1080p30 lock: UHD 3840×2160 @24/30p, HD 1920×1080 @24p, plus Cine variants. **HDMI output stays fixed at 1080p regardless** — see "Known Limitations".
 - [ ] Enable the dormant iOS 27 `registerSceneAccessory` external-display path once building against the iOS 27 SDK, and verify its API shapes against Apple's current documentation.
 - [ ] DI refactor Phase 2 — a `PhotoLibrarySaving` seam for unit-testing the Photos-save path.
 - [ ] DI refactor Phase 3 — a narrow `CaptureSessionControlling` lifecycle abstraction (or a deliberate decision to skip it).

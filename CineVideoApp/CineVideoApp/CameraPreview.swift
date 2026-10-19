@@ -128,7 +128,18 @@ struct CameraPreview: UIViewRepresentable {
 
         func setupPreviewLayer(session: AVCaptureSession) {
             let layer = AVCaptureVideoPreviewLayer(session: session)
-            layer.videoGravity = .resizeAspectFill
+            // `.resizeAspect`, not `.resizeAspectFill`: the capture format is
+            // locked to a fixed 16:9 (1920x1080) frame in
+            // `CameraManager.applyCineHDFormat`, which rarely matches a
+            // device screen's aspect ratio. `.resizeAspectFill` scales the
+            // frame up to fill the view and crops whatever overflows,
+            // silently hiding real, recorded edges of the frame.
+            // `.resizeAspect` letterboxes/pillarboxes instead (against the
+            // black `backgroundColor` set in `makeUIView`), keeping the
+            // on-device preview showing the full, uncropped field of view —
+            // matching `ExternalDisplayController`'s HDMI mirror, which
+            // already uses `.resizeAspect` for the same reason.
+            layer.videoGravity = .resizeAspect
             self.layer.addSublayer(layer)
             previewLayer = layer
         }

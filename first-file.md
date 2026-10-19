@@ -61,3 +61,7 @@ To-Do
 
 Needs:
 USB-C hub behavior with simultaneous external display + USB microphone input
+
+> > > Update Status
+> > > \*\*\* Task
+> > > The Camera preview needs to sit properly in the UI. Curreently parts of the Camera Preview are cropped. This is confirmed my the HDMI output on an external monitor.
