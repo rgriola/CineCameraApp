@@ -23,6 +23,9 @@ extension Logger {
     /// Capture session lifecycle: configuration, format/codec setup, rotation.
     nonisolated static let camera = Logger(subsystem: subsystem, category: "Camera")
 
+    /// Manual camera controls: lens/zoom, focus, exposure, and format changes.
+    nonisolated static let controls = Logger(subsystem: subsystem, category: "Controls")
+
     /// Recording lifecycle: start/stop, and saving to the Photo Library.
     nonisolated static let recording = Logger(subsystem: subsystem, category: "Recording")
 
