@@ -41,7 +41,7 @@ CineCameraApp/
 ├── mvp-plan.md               # Original feature plan, phased implementation steps, decisions
 ├── camera-clean-feed.md      # HDMI clean-feed bug diagnosis + fix writeup (see "Known Limitations")
 ├── di-refactor.md            # Dependency-injection refactor plan for unit-testability (Phase 0 + 1 done)
-├── camera-controls-plan.md   # Phased plan for camera/format controls: HD-4K, 24p/30p, zoom, focus, exposure
+├── camera-controls-plan.md   # Phased plan for camera/format controls: HD-4K, 24p/30p, zoom, focus, exposure, audio
 ├── first-file.md             # Original task brief + concurrency "mental model"
 └── CineVideoApp/
     ├── CineVideoApp.xcodeproj
@@ -117,7 +117,9 @@ Note: the DI refactor (`di-refactor.md`) deliberately stopped after Phase 1 (pur
 - **Orientation support is Portrait + Landscape Right only**, locked for the duration of any recording (preview, recording, and the app's own UIKit orientation mask all freeze together, then catch back up when recording stops). Note: `mvp-plan.md`'s original plan called for Landscape **Left**, but the shipped `Info.plist`/`AppDelegate` configuration actually locks to Landscape **Right**.
 - **No camera switching** — back wide-angle camera only; no front-camera flip, no lens/zoom picker. Note the active device is `.builtInWideAngleCamera`, a *single-lens* device on which zoom across focal lengths is impossible; adding zoom requires moving to a virtual multi-lens device (`camera-controls-plan.md`, decision D2).
 - **No manual capture controls** — no exposure/shutter/ISO adjustment or lock, no STANDARD/CINE mode toggle, no HD/UHD or 24p/30p toggle. Recording format is hard-locked to 1920×1080 @ 30p H.265. A phased plan to add format, frame-rate, zoom, focus, and exposure controls is written up in `camera-controls-plan.md` (ISO/shutter deferred to a later phase); not yet implemented.
-- **No external/USB microphone selection UI** — the app always plays back/records through the system's current default audio route; it cannot detect or let the user pick a specific external mic (e.g. DJI Mic, Rode). Explicitly called out as a to-do.
+- **No external/USB microphone selection UI** — the app always plays back/records through the system's current default audio route; it cannot detect or let the user pick a specific external mic (e.g. DJI Mic, Rode), and there is no audio level metering. Note that on iOS this is an `AVAudioSession.setPreferredInput` concern, **not** an `AVCaptureDevice` one — `AVCaptureDevice.default(for: .audio)` is a single proxy device whose identity never changes. Planned as Phase 7 of `camera-controls-plan.md` (source picker + VU meters, modeled on PromptCam).
+- **No audio input metering** — there are no VU meters, so there is no way to confirm a mic is live or catch clipping before a take. Planned alongside the source picker in Phase 7 of `camera-controls-plan.md`.
+- **Bluetooth microphones are not selectable** — the audio session uses `.allowBluetoothA2DP`, which is output-only. Enabling Bluetooth *input* requires `.allowBluetooth` (HFP), which would narrowband capture to 8/16 kHz **and** steal audio output from the HDMI route. Deliberately left off; see `camera-controls-plan.md` decision D13.
 - **`SWIFT_STRICT_CONCURRENCY` has not been reviewed/configured** — an open item from `mvp-plan.md`.
 - **Default/placeholder app icon** — a real app icon has not been added yet.
 - **iOS 27 external-display "scene accessory" path is dormant.** `ExternalDisplaySceneDelegate.swift` contains a fully written `registerSceneAccessory` implementation for the upcoming iOS 27 external-display API, wrapped in `#if false` because those symbols don't exist in the iOS 26.5 SDK this project currently builds against. The static `Info.plist` scene-manifest mechanism (used today) will stop auto-connecting the external-display scene on iOS 27+, so this block must be enabled once building against that SDK.
@@ -128,7 +130,7 @@ Note: the DI refactor (`di-refactor.md`) deliberately stopped after Phase 1 (pur
 
 Pulled from the "To-Do" / "Needs" sections of `mvp-plan.md`, `camera-clean-feed.md`, and `di-refactor.md`:
 
-- [ ] Add external/USB microphone input support and selection UI (review PromptCam's audio model for best practice).
+- [ ] Add external/USB microphone input support + selection UI and VU meters — phased plan in `camera-controls-plan.md` Phase 7. Note the prerequisite refactor (7a): `AudioMirror` currently holds the session's **only** permitted `AVCaptureAudioDataOutput` and installs it only on HDMI connect; metering requires making that tap permanent and toggling only playback.
 - [ ] Review and explicitly configure `SWIFT_STRICT_CONCURRENCY`.
 - [ ] Add a real app icon.
 - [ ] Confirm USB-C hub behavior for simultaneous external display + USB microphone input.
