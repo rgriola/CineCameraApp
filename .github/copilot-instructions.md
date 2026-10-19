@@ -28,21 +28,19 @@ Before proceeding with any task involving Swift code, SwiftUI views, UIKit views
 
 If the task does not involve any Swift or Apple platform code, proceed normally.
 
-
->>>> BELOW TEXT FOR USER DO NOT READ <<<<<
-
-swift-lead	Orchestrator;
-Routes tasks to the right specialists.
-concurrency-specialist	Swift 6.2 strict concurrency, actors, Sendable, async/await.
+> > > DO NOT READ BELOW THIS LINE <<<
+> > > swift-lead Orchestrator;
+> > > Routes tasks to the right specialists.
+> > > concurrency-specialist Swift 6.2 strict concurrency, actors, Sendable, async/await.
 
 foundation-models-specialist;
 Apple Foundation Models (iOS 26+), @Generable, @Guide, tool calling.
-on-device-ai-architect	MLX Swift, llama.cpp, Core ML, device tier planning, multi-backend fallback.
+on-device-ai-architect MLX Swift, llama.cpp, Core ML, device tier planning, multi-backend fallback.
 
 mobile-a11y-specialist;
 iOS/macOS accessibility, VoiceOver, Dynamic Type, focus management.
 
-swiftui-specialist	Modern SwiftUI, @Observable, state management, NavigationStack.
+swiftui-specialist Modern SwiftUI, @Observable, state management, NavigationStack.
 
 app-review-guardian;
 App Store review compliance, privacy manifests, IAP rules.
