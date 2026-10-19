@@ -96,3 +96,83 @@ nonisolated enum ExposurePolicy {
         return Swift.min(Swift.max(value, lower), upper)
     }
 }
+
+/// A `Sendable` snapshot of the device-derived control state, built on
+/// `sessionQueue` (where the `AVCaptureDevice` is safe to read) and handed to
+/// the main actor in one hop. Reading these values directly from the main
+/// actor would race `sessionQueue`'s configuration work.
+nonisolated struct CameraControlSnapshot: Equatable, Sendable {
+    var zoomDisplayed: CGFloat
+    var zoomRangeDisplayed: ClosedRange<CGFloat>
+    var zoomPresets: [CGFloat]
+    var exposureBias: Float
+    var exposureBiasRange: ClosedRange<Float>
+    var isMultiLensDevice: Bool
+    var isFocusLocked: Bool
+    var isExposureLocked: Bool
+
+    /// Pre-device defaults. A degenerate `1...1` zoom range and `0...0` bias
+    /// range mean "nothing selectable yet", which is what the UI should show
+    /// before the session finishes configuring.
+    static let placeholder = CameraControlSnapshot(
+        zoomDisplayed: 1,
+        zoomRangeDisplayed: 1...1,
+        zoomPresets: [],
+        exposureBias: 0,
+        exposureBiasRange: 0...0,
+        isMultiLensDevice: false,
+        isFocusLocked: false,
+        isExposureLocked: false
+    )
+
+    /// Builds a snapshot from raw device readings. Pure, so the range-safety
+    /// and conversion behavior is unit-testable without an `AVCaptureDevice`.
+    ///
+    /// All zoom inputs are DEVICE space (see `ZoomPolicy`); the snapshot's
+    /// zoom values are DISPLAY space. Inverted or non-finite bounds are
+    /// collapsed rather than passed to `ClosedRange`, which would trap.
+    static func make(
+        zoomFactor: CGFloat,
+        minZoomFactor: CGFloat,
+        maxZoomFactor: CGFloat,
+        switchOverFactors: [CGFloat],
+        displayMultiplier: CGFloat,
+        exposureBias: Float,
+        minExposureBias: Float,
+        maxExposureBias: Float,
+        isMultiLensDevice: Bool,
+        isFocusLocked: Bool,
+        isExposureLocked: Bool
+    ) -> CameraControlSnapshot {
+        let lowerDisplayed = ZoomPolicy.displayed(fromDeviceFactor: minZoomFactor, multiplier: displayMultiplier)
+        let upperDisplayed = ZoomPolicy.displayed(fromDeviceFactor: maxZoomFactor, multiplier: displayMultiplier)
+        let currentDisplayed = ZoomPolicy.displayed(fromDeviceFactor: zoomFactor, multiplier: displayMultiplier)
+
+        let zoomRange = safeRange(lower: lowerDisplayed, upper: upperDisplayed, fallback: 1)
+        let biasRange = safeRange(lower: minExposureBias, upper: maxExposureBias, fallback: 0)
+
+        return CameraControlSnapshot(
+            zoomDisplayed: ZoomPolicy.clamp(currentDisplayed, min: zoomRange.lowerBound, max: zoomRange.upperBound),
+            zoomRangeDisplayed: zoomRange,
+            zoomPresets: ZoomPolicy.presetStops(
+                switchOverFactors: switchOverFactors,
+                multiplier: displayMultiplier,
+                minFactor: minZoomFactor,
+                maxFactor: maxZoomFactor
+            ),
+            exposureBias: ExposurePolicy.clampBias(exposureBias, min: biasRange.lowerBound, max: biasRange.upperBound),
+            exposureBiasRange: biasRange,
+            isMultiLensDevice: isMultiLensDevice,
+            isFocusLocked: isFocusLocked,
+            isExposureLocked: isExposureLocked
+        )
+    }
+
+    /// `ClosedRange` traps when `lower > upper`, and propagates NaN silently.
+    /// Device-reported bounds are not worth trusting with a crash.
+    private static func safeRange<T: BinaryFloatingPoint>(lower: T, upper: T, fallback: T) -> ClosedRange<T> {
+        guard lower.isFinite, upper.isFinite else { return fallback...fallback }
+        guard lower <= upper else { return lower...lower }
+        return lower...upper
+    }
+}

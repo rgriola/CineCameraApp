@@ -45,6 +45,24 @@ nonisolated struct CineFormat: Equatable, Hashable, Codable, Sendable {
     var frameRate: CaptureFrameRate
 
     static let `default` = CineFormat(resolution: .hd1080, frameRate: .fps30)
+
+    /// Maps a device's real active dimensions and frame rate back onto a
+    /// modeled format, or `nil` when the device is running something this app
+    /// doesn't model. Used to report what the hardware *actually* settled on
+    /// rather than what was requested — the two diverge whenever a format
+    /// isn't available and the session's preset picks one instead.
+    static func matching(width: Int32, height: Int32, frameRate: Double) -> CineFormat? {
+        guard frameRate.isFinite else { return nil }
+        guard let resolution = CaptureResolution.allCases.first(where: {
+            $0.dimensions.width == width && $0.dimensions.height == height
+        }) else { return nil }
+        // Real devices report rates like 29.97; match to the nearest whole
+        // frame rather than requiring exact equality.
+        guard let rate = CaptureFrameRate.allCases.first(where: {
+            abs(Double($0.rawValue) - frameRate) < 0.5
+        }) else { return nil }
+        return CineFormat(resolution: resolution, frameRate: rate)
+    }
 }
 
 extension CineFormat {

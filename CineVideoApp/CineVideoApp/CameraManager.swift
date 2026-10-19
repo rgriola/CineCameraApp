@@ -243,6 +243,19 @@ final class CameraManager: NSObject {
     var photoLibraryAuthStatus: PHAuthorizationStatus = .notDetermined
     var lastError: String?
 
+    /// The recording format the device actually settled on, or `nil` if it is
+    /// running something this app doesn't model (which the capture log flags
+    /// as an error). Read back from the hardware rather than assumed, so it
+    /// can't claim Cine-HD on a device that failed to apply it. Still fixed to
+    /// Cine-HD in this phase; Phase 2 makes it user-selectable.
+    private(set) var activeFormat: CineFormat?
+
+    /// Device-derived manual-control state, refreshed from `sessionQueue`
+    /// whenever the device or its active format changes. The zoom values are
+    /// DISPLAY space (what the user sees, e.g. `1.0` == "1×") — see
+    /// `ZoomPolicy` for why that distinction matters.
+    private(set) var controls: CameraControlSnapshot = .placeholder
+
     var session: AVCaptureSession { cs.session }
 
     /// Notifies observers whenever the orientation lock engages/releases
@@ -463,9 +476,13 @@ final class CameraManager: NSObject {
 
         guard !cs.isConfigured else {
             if !cs.session.isRunning { cs.session.startRunning() }
+            let snapshot = cs.videoDevice.map(Self.makeControlSnapshot(for:))
+            let appliedFormat = cs.videoDevice.flatMap(Self.currentCineFormat(of:))
             DispatchQueue.main.async { [weak self] in
                 self?.videoDevice = cs.videoDevice
                 self?.isSessionRunning = cs.session.isRunning
+                if let snapshot { self?.controls = snapshot }
+                self?.activeFormat = appliedFormat
             }
             return
         }
@@ -474,9 +491,7 @@ final class CameraManager: NSObject {
 
         cs.session.beginConfiguration()
 
-        guard let videoDevice = AVCaptureDevice.default(
-            .builtInWideAngleCamera, for: .video, position: .back)
-        else {
+        guard let videoDevice = selectVideoDevice() else {
             Logger.camera.error("Failed to find a video device.")
             cs.session.commitConfiguration()
             return
@@ -537,6 +552,19 @@ final class CameraManager: NSObject {
         }
 
         cs.session.commitConfiguration()
+
+        // MUST come after `commitConfiguration()`, not inside the
+        // configuration block. Per AVCaptureDevice.h, "the new format and
+        // frame rates are applied together in commitConfiguration" — the
+        // `activeFormat` assignment above is deferred until here, and
+        // applying it resets `videoZoomFactor` to 1.0 and re-derives
+        // `min/maxAvailableVideoZoomFactor`. Anchoring inside the block would
+        // therefore be silently undone, leaving a virtual device framed at
+        // its ultra-wide 0.5× default. The same applies on the fallback path
+        // where no format was assigned at all: the session's preset then
+        // configures the input's format itself at commit time.
+        applyInitialZoomAnchor(to: videoDevice)
+
         cs.session.startRunning()
         Logger.camera.notice("Capture session configured and started.")
 
@@ -545,10 +573,98 @@ final class CameraManager: NSObject {
         setupCaptureRotationCoordinator(cs: cs, device: videoDevice)
         lockHDMIToLandscape(cs: cs)
 
+        // Snapshotted here, on sessionQueue, after the format and zoom anchor
+        // have settled — the available zoom range is format-dependent.
+        let snapshot = Self.makeControlSnapshot(for: videoDevice)
+        let appliedFormat = Self.currentCineFormat(of: videoDevice)
+
         DispatchQueue.main.async { [weak self] in
             self?.videoDevice = cs.videoDevice
             self?.isSessionRunning = cs.session.isRunning
+            self?.controls = snapshot
+            self?.activeFormat = appliedFormat
         }
+    }
+
+    /// Reads back the format the device is genuinely running, mapped onto the
+    /// app's modeled formats. `nil` means the hardware is on something this
+    /// app doesn't model — which only happens when the requested format
+    /// couldn't be applied.
+    nonisolated private static func currentCineFormat(of device: AVCaptureDevice) -> CineFormat? {
+        let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        let duration = CMTimeGetSeconds(device.activeVideoMinFrameDuration)
+        guard duration > 0 else { return nil }
+        let matched = CineFormat.matching(
+            width: dimensions.width,
+            height: dimensions.height,
+            frameRate: 1.0 / duration
+        )
+        if matched == nil {
+            Logger.camera.error(
+                "Device is running an unmodeled format: \(dimensions.width, privacy: .public)x\(dimensions.height, privacy: .public) @ \(1.0 / duration, privacy: .public)fps."
+            )
+        }
+        return matched
+    }
+
+    /// Picks the richest available back camera. A virtual multi-lens device is
+    /// what makes zoom across focal lengths possible at all; the single-lens
+    /// wide-angle camera remains the universal fallback.
+    nonisolated private func selectVideoDevice() -> AVCaptureDevice? {
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: VideoDeviceSelector.preferredTypes,
+            mediaType: .video,
+            position: .back
+        )
+        guard let device = VideoDeviceSelector.select(from: discovery.devices) else { return nil }
+        Logger.camera.notice(
+            "Selected video device: \(device.localizedName, privacy: .public) [\(device.deviceType.rawValue, privacy: .public)], virtual=\(device.isVirtualDevice, privacy: .public), lenses=\(device.constituentDevices.count, privacy: .public)."
+        )
+        return device
+    }
+
+    /// Pins the starting zoom to the user-facing 1× framing.
+    ///
+    /// On a virtual device, `videoZoomFactor == 1.0` is the ULTRA-WIDE lens —
+    /// what the Camera app labels "0.5×". Leaving the default in place would
+    /// silently widen this app's framing the moment it moved off the
+    /// single-lens camera. The 1× anchor is `1.0 / displayVideoZoomFactorMultiplier`
+    /// (iOS 18+), which is exactly `1.0` on a single-lens device, so this is a
+    /// no-op there.
+    nonisolated private func applyInitialZoomAnchor(to device: AVCaptureDevice) {
+        let anchor = ZoomPolicy.clamp(
+            ZoomPolicy.deviceFactor(fromDisplayed: 1, multiplier: device.displayVideoZoomFactorMultiplier),
+            min: device.minAvailableVideoZoomFactor,
+            max: device.maxAvailableVideoZoomFactor
+        )
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = anchor
+            device.unlockForConfiguration()
+            Logger.controls.info(
+                "Anchored initial zoom to 1× (device factor \(anchor, privacy: .public), multiplier \(device.displayVideoZoomFactorMultiplier, privacy: .public))."
+            )
+        } catch {
+            Logger.controls.error("Failed to lock device to anchor initial zoom: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Reads the device's current control-related values into a `Sendable`
+    /// snapshot. Called on `sessionQueue`, where the device is safe to read.
+    nonisolated private static func makeControlSnapshot(for device: AVCaptureDevice) -> CameraControlSnapshot {
+        CameraControlSnapshot.make(
+            zoomFactor: device.videoZoomFactor,
+            minZoomFactor: device.minAvailableVideoZoomFactor,
+            maxZoomFactor: device.maxAvailableVideoZoomFactor,
+            switchOverFactors: device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) },
+            displayMultiplier: device.displayVideoZoomFactorMultiplier,
+            exposureBias: device.exposureTargetBias,
+            minExposureBias: device.minExposureTargetBias,
+            maxExposureBias: device.maxExposureTargetBias,
+            isMultiLensDevice: device.isVirtualDevice,
+            isFocusLocked: device.focusMode == .locked,
+            isExposureLocked: device.exposureMode == .locked
+        )
     }
 
     /// Locks the active format to Cine-HD: 1920x1080 @ 30fps. Falls back to
@@ -574,7 +690,15 @@ final class CameraManager: NSObject {
         guard let index = CineHDFormatSelector.selectIndex(
             in: descriptors, targetFrameRate: targetFrameRate
         ) else {
-            Logger.camera.warning("No exact 1920x1080@30 format found on this device; using default format.")
+            // Escalated from a warning: since the capture device became a
+            // virtual multi-lens device, landing here means the app is
+            // recording at something other than Cine-HD. The actual
+            // dimensions are logged so the regression is diagnosable from
+            // Console rather than only visible in the footage.
+            let actual = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+            Logger.camera.error(
+                "No exact 1920x1080@30 format on \(device.localizedName, privacy: .public); leaving device format at \(actual.width, privacy: .public)x\(actual.height, privacy: .public)."
+            )
             return
         }
 

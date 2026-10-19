@@ -10,6 +10,7 @@
 import Testing
 import Foundation
 import CoreGraphics
+import AVFoundation
 @testable import CineVideoApp
 
 struct CaptureFormatSelectorTests {
@@ -264,7 +265,6 @@ struct ExposurePolicyTests {
 }
 
 struct CineFormatTests {
-
     @Test("the default format is HD at 30p")
     func defaultIsHD30() {
         #expect(CineFormat.default.resolution == .hd1080)
@@ -312,5 +312,201 @@ struct CineFormatTests {
     func storageKeys() {
         #expect(CineFormat.StorageKey.resolution == "cineFormat.resolution")
         #expect(CineFormat.StorageKey.frameRate == "cineFormat.frameRate")
+    }
+}
+
+struct VideoDeviceSelectorTests {
+
+    @Test("preference order puts virtual multi-lens devices ahead of the single lens")
+    func preferenceOrder() {
+        #expect(VideoDeviceSelector.preferredTypes.first == .builtInTripleCamera)
+        #expect(VideoDeviceSelector.preferredTypes.last == .builtInWideAngleCamera)
+        // The single-lens camera must stay last so it is only ever the fallback.
+        #expect(VideoDeviceSelector.preferredTypes.firstIndex(of: .builtInDualWideCamera)
+                ?? 0 < VideoDeviceSelector.preferredTypes.count - 1)
+    }
+
+    @Test("every preferred type is distinct")
+    func typesAreDistinct() {
+        #expect(Set(VideoDeviceSelector.preferredTypes).count == VideoDeviceSelector.preferredTypes.count)
+    }
+}
+
+struct CameraControlSnapshotTests {
+
+    private func isClose(_ a: CGFloat, _ b: CGFloat, tolerance: CGFloat = 1e-6) -> Bool {
+        abs(a - b) <= tolerance
+    }
+
+    /// A triple-camera-like device: ultra-wide at device factor 1.0 displays
+    /// as 0.5x, so the 1x anchor sits at device factor 2.0.
+    private func tripleCamera(zoomFactor: CGFloat = 2.0) -> CameraControlSnapshot {
+        CameraControlSnapshot.make(
+            zoomFactor: zoomFactor,
+            minZoomFactor: 1.0,
+            maxZoomFactor: 123.0,
+            switchOverFactors: [2.0, 6.0],
+            displayMultiplier: 0.5,
+            exposureBias: 0,
+            minExposureBias: -8,
+            maxExposureBias: 8,
+            isMultiLensDevice: true,
+            isFocusLocked: false,
+            isExposureLocked: false
+        )
+    }
+
+    @Test("converts the device zoom factor into display space")
+    func convertsZoomToDisplaySpace() {
+        let snapshot = tripleCamera(zoomFactor: 2.0)
+        #expect(isClose(snapshot.zoomDisplayed, 1.0))
+        #expect(isClose(snapshot.zoomRangeDisplayed.lowerBound, 0.5))
+        #expect(isClose(snapshot.zoomRangeDisplayed.upperBound, 61.5))
+    }
+
+    @Test("derives lens presets rather than hardcoding them")
+    func derivesPresets() {
+        let snapshot = tripleCamera()
+        #expect(snapshot.zoomPresets.count == 3)
+        #expect(isClose(snapshot.zoomPresets[0], 0.5))
+        #expect(isClose(snapshot.zoomPresets[1], 1.0))
+        #expect(isClose(snapshot.zoomPresets[2], 3.0))
+    }
+
+    @Test("a single-lens device reports no multi-lens presets and a 1x floor")
+    func singleLensDevice() {
+        let snapshot = CameraControlSnapshot.make(
+            zoomFactor: 1.0,
+            minZoomFactor: 1.0,
+            maxZoomFactor: 16.0,
+            switchOverFactors: [],
+            displayMultiplier: 1.0,
+            exposureBias: 0,
+            minExposureBias: -8,
+            maxExposureBias: 8,
+            isMultiLensDevice: false,
+            isFocusLocked: false,
+            isExposureLocked: false
+        )
+        #expect(snapshot.isMultiLensDevice == false)
+        #expect(isClose(snapshot.zoomDisplayed, 1.0))
+        #expect(isClose(snapshot.zoomRangeDisplayed.lowerBound, 1.0))
+        #expect(snapshot.zoomPresets == [1.0])
+    }
+
+    @Test("clamps a reported zoom that sits outside the range")
+    func clampsOutOfRangeZoom() {
+        let snapshot = CameraControlSnapshot.make(
+            zoomFactor: 999,
+            minZoomFactor: 1.0,
+            maxZoomFactor: 4.0,
+            switchOverFactors: [],
+            displayMultiplier: 0.5,
+            exposureBias: 99,
+            minExposureBias: -2,
+            maxExposureBias: 2,
+            isMultiLensDevice: true,
+            isFocusLocked: false,
+            isExposureLocked: false
+        )
+        #expect(isClose(snapshot.zoomDisplayed, 2.0))
+        #expect(snapshot.exposureBias == 2)
+    }
+
+    @Test("inverted device bounds collapse instead of trapping ClosedRange")
+    func invertedBoundsDoNotTrap() {
+        let snapshot = CameraControlSnapshot.make(
+            zoomFactor: 1.0,
+            minZoomFactor: 10.0,
+            maxZoomFactor: 1.0,
+            switchOverFactors: [],
+            displayMultiplier: 1.0,
+            exposureBias: 0,
+            minExposureBias: 8,
+            maxExposureBias: -8,
+            isMultiLensDevice: false,
+            isFocusLocked: false,
+            isExposureLocked: false
+        )
+        #expect(snapshot.zoomRangeDisplayed.lowerBound == 10.0)
+        #expect(snapshot.zoomRangeDisplayed.upperBound == 10.0)
+        #expect(snapshot.exposureBiasRange.lowerBound == 8)
+        #expect(snapshot.exposureBiasRange.upperBound == 8)
+    }
+
+    @Test("non-finite device bounds fall back rather than propagating NaN")
+    func nonFiniteBounds() {
+        let snapshot = CameraControlSnapshot.make(
+            zoomFactor: 1.0,
+            minZoomFactor: .nan,
+            maxZoomFactor: 16.0,
+            switchOverFactors: [],
+            displayMultiplier: 1.0,
+            exposureBias: 0,
+            minExposureBias: -.infinity,
+            maxExposureBias: 8,
+            isMultiLensDevice: false,
+            isFocusLocked: false,
+            isExposureLocked: false
+        )
+        #expect(snapshot.zoomRangeDisplayed.lowerBound == 1)
+        #expect(snapshot.zoomRangeDisplayed.upperBound == 1)
+        #expect(snapshot.exposureBiasRange.lowerBound == 0)
+        #expect(snapshot.exposureBiasRange.upperBound == 0)
+        #expect(!snapshot.zoomDisplayed.isNaN)
+    }
+
+    @Test("carries focus and exposure lock state through")
+    func carriesLockState() {
+        let snapshot = CameraControlSnapshot.make(
+            zoomFactor: 1.0, minZoomFactor: 1.0, maxZoomFactor: 4.0,
+            switchOverFactors: [], displayMultiplier: 1.0,
+            exposureBias: 0, minExposureBias: -2, maxExposureBias: 2,
+            isMultiLensDevice: false, isFocusLocked: true, isExposureLocked: true
+        )
+        #expect(snapshot.isFocusLocked)
+        #expect(snapshot.isExposureLocked)
+    }
+
+    @Test("the placeholder is inert until a device exists")
+    func placeholderIsInert() {
+        let placeholder = CameraControlSnapshot.placeholder
+        #expect(placeholder.zoomPresets.isEmpty)
+        #expect(placeholder.isMultiLensDevice == false)
+        #expect(placeholder.zoomDisplayed == 1)
+        #expect(placeholder.exposureBias == 0)
+    }
+}
+
+struct CineFormatMatchingTests {
+
+    @Test("maps real device dimensions and rates back onto modeled formats")
+    func mapsKnownFormats() {
+        #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: 30) == CineFormat(resolution: .hd1080, frameRate: .fps30))
+        #expect(CineFormat.matching(width: 3840, height: 2160, frameRate: 24) == CineFormat(resolution: .uhd4K, frameRate: .fps24))
+    }
+
+    @Test("tolerates non-integral hardware rates such as 29.97")
+    func tolerates2997() {
+        #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: 29.97)?.frameRate == .fps30)
+        #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: 23.976)?.frameRate == .fps24)
+    }
+
+    @Test("returns nil for dimensions the app does not model")
+    func nilForUnmodeledDimensions() {
+        #expect(CineFormat.matching(width: 1280, height: 720, frameRate: 30) == nil)
+        #expect(CineFormat.matching(width: 4032, height: 3024, frameRate: 30) == nil)
+    }
+
+    @Test("returns nil for frame rates the app does not model")
+    func nilForUnmodeledRate() {
+        #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: 60) == nil)
+        #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: 120) == nil)
+    }
+
+    @Test("returns nil rather than trapping on a non-finite rate")
+    func nilForNonFiniteRate() {
+        #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: .nan) == nil)
+        #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: .infinity) == nil)
     }
 }

@@ -105,3 +105,26 @@ nonisolated enum RecordingURL {
             .appendingPathExtension("mov")
     }
 }
+
+/// Back-camera preference order. A virtual (multi-lens) device is required for
+/// zoom across focal lengths — `.builtInWideAngleCamera` is a single lens and
+/// cannot zoom optically at all — so the richest available device wins, with
+/// the single-lens camera kept as the universal fallback.
+nonisolated enum VideoDeviceSelector {
+    static let preferredTypes: [AVCaptureDevice.DeviceType] = [
+        .builtInTripleCamera,
+        .builtInDualWideCamera,
+        .builtInDualCamera,
+        .builtInWideAngleCamera,
+    ]
+
+    /// First device matching the preference order. Deliberately iterates
+    /// `preferredTypes` rather than trusting `DiscoverySession` to return
+    /// devices in the order requested.
+    static func select(from devices: [AVCaptureDevice]) -> AVCaptureDevice? {
+        for type in preferredTypes {
+            if let match = devices.first(where: { $0.deviceType == type }) { return match }
+        }
+        return devices.first
+    }
+}
