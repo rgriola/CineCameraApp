@@ -65,3 +65,5 @@ USB-C hub behavior with simultaneous external display + USB microphone input
 > > > Update Status
 > > > \*\*\* Task
 > > > The Camera preview needs to sit properly in the UI. Curreently parts of the Camera Preview are cropped. This is confirmed my the HDMI output on an external monitor.
+
+All the main features are working. We need to work on the UI and layout for horizontal and vertical. this is the UI layout I am thinking of the landscape view. the <Button> icons are notes that the elements next to it are buttons.
