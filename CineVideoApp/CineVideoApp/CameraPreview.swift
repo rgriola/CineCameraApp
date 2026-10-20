@@ -15,6 +15,7 @@ struct CameraPreview: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PreviewUIView {
         let view: CameraPreview.PreviewUIView = PreviewUIView()
+        cameraManager.cameraPreviewView = view
         view.backgroundColor = .black
         view.setupPreviewLayer(session: session)
         if let device = cameraManager.videoDevice {
@@ -53,7 +54,7 @@ struct CameraPreview: UIViewRepresentable {
         if let device = cameraManager.videoDevice, !context.coordinator.isAttached(to: uiView) {
             context.coordinator.attach(to: uiView, device: device)
         }
-        context.coordinator.updateLockState(isRecording: cameraManager.isRecording)
+        context.coordinator.updateLockState(isLocked: cameraManager.isOrientationLocked)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -64,7 +65,7 @@ struct CameraPreview: UIViewRepresentable {
     // -------------------------------------------------------------------
     // Coordinator owns a preview-specific RotationCoordinator so the
     // on-device preview always matches how the device is held — except
-    // while recording, when CameraManager.isRecording freezes it in place.
+    // while starting/recording/stopping, when CameraManager freezes it.
     // -------------------------------------------------------------------
     @MainActor
     final class Coordinator: NSObject {
@@ -153,16 +154,16 @@ struct CameraPreview: UIViewRepresentable {
         /// Called from `updateUIView` on every render so the preview freezes
         /// the instant recording starts, and immediately catches up to the
         /// device's current angle the instant recording stops.
-        func updateLockState(isRecording: Bool) {
-            let wasLocked = isLocked
-            isLocked = isRecording
+        func updateLockState(isLocked: Bool) {
+            let wasLocked = self.isLocked
+            self.isLocked = isLocked
             if wasLocked, !isLocked, let coordinator = rotationCoordinator {
                 apply(coordinator.videoRotationAngleForHorizonLevelPreview)
             }
         }
 
         private func apply(_ angle: CGFloat) {
-            guard !isLocked else {
+            guard cameraManager?.isOrientationLocked != true else {
                 Logger.orientation.debug("Preview apply skipped: orientation locked (recording).")
                 return
             }

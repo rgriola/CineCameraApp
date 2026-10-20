@@ -9,6 +9,37 @@
 import OSLog
 import Photos
 import SwiftUI
+import UIKit
+
+enum RecordingPhase {
+    case idle
+    case starting
+    case recording
+    case stopping
+
+    var locksOrientation: Bool { self != .idle }
+    var isTransitioning: Bool { self == .starting || self == .stopping }
+
+    mutating func begin() -> Bool {
+        guard self == .idle else { return false }
+        self = .starting
+        return true
+    }
+
+    mutating func didStart() -> Bool {
+        guard self == .starting else { return false }
+        self = .recording
+        return true
+    }
+
+    mutating func stop() -> Bool {
+        guard self == .recording else { return false }
+        self = .stopping
+        return true
+    }
+
+    mutating func finish() { self = .idle }
+}
 
 // ---------------------------------------------------------------------------
 // CameraSession — plain NSObject that owns all AVFoundation objects.
@@ -263,7 +294,12 @@ final class CameraManager: NSObject {
 
     // MARK: - UI state (main actor)
     var isSessionRunning     = false
-    var isRecording          = false
+    private(set) var recordingPhase: RecordingPhase = .idle
+    var isRecording: Bool { recordingPhase == .recording || recordingPhase == .stopping }
+    var isOrientationLocked: Bool { recordingPhase.locksOrientation }
+    // Resolve the actual hosting scene at record-button time, without retaining
+    // the view or relying on connected-scene/key-window ordering (HDMI is key).
+    @ObservationIgnored weak var cameraPreviewView: UIView?
     var cameraAuthStatus:       AVAuthorizationStatus = .notDetermined
     var microphoneAuthStatus:   AVAuthorizationStatus = .notDetermined
     var photoLibraryAuthStatus: PHAuthorizationStatus = .notDetermined
@@ -294,10 +330,8 @@ final class CameraManager: NSObject {
 
     var session: AVCaptureSession { cs.session }
 
-    /// Notifies observers whenever the orientation lock engages/releases
-    /// (i.e., recording starts/stops), so other consumers of the live camera
-    /// feed — like `ExternalDisplayController`'s HDMI mirror — can freeze and
-    /// unfreeze their own rotation in lockstep with the on-device preview.
+    /// Notifies observers when the phone lock engages before recording startup
+    /// or releases after completion/rejection. HDMI remains fixed independently.
     /// `@ObservationIgnored` because this is a callback hook, not UI state —
     /// `@Observable`'s macro can't synthesize tracking for a MainActor-typed
     /// closure property.
@@ -361,15 +395,16 @@ final class CameraManager: NSObject {
         // Callbacks arrive from sessionQueue; hop to main to mutate @Observable state.
         cs.onRecordingStateChange = { [weak self] recording in
             DispatchQueue.main.async {
-                self?.isRecording = recording
-                // Lock/unlock the app's UIKit-level interface-orientation mask
-                // alongside the AVFoundation-level rotation lock in CameraSession.
+                guard let self else { return }
                 if recording {
-                    OrientationLock.lock()
+                    if !self.recordingPhase.didStart() {
+                        Logger.recording.error("Unexpected recording-start callback.")
+                    }
                 } else {
+                    self.recordingPhase.finish()
                     OrientationLock.unlock()
+                    self.onOrientationLockChange?(false)
                 }
-                self?.onOrientationLockChange?(recording)
             }
         }
         cs.onSaveError = { [weak self] message in
@@ -400,10 +435,40 @@ final class CameraManager: NSObject {
     }
 
     func toggleRecording() {
-        // Capture cs before leaving the main actor — see setupSession() for explanation.
+        guard !recordingPhase.isTransitioning else {
+            Logger.recording.notice("Recording request ignored: start/stop already in progress.")
+            return
+        }
         let cs = self.cs
+        if recordingPhase == .recording {
+            guard recordingPhase.stop() else { return }
+            sessionQueue.async {
+                Logger.recording.notice("Stopping recording; keeping orientation locked until completion.")
+                cs.movieOutput.stopRecording()
+            }
+            return
+        }
+        guard isSessionRunning else {
+            lastError = "The camera isn't ready to record. Please try again."
+            Logger.recording.error("Recording rejected: capture session isn't running.")
+            return
+        }
+        do {
+            try OrientationLock.lock(in: cameraPreviewView?.window?.windowScene)
+        } catch {
+            lastError = error.localizedDescription
+            Logger.orientation.error("Recording rejected: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        guard recordingPhase.begin() else {
+            OrientationLock.unlock()
+            Logger.recording.error("Recording rejected: invalid start transition.")
+            lastError = "A recording is already starting or in progress."
+            return
+        }
+        onOrientationLockChange?(true)
         sessionQueue.async { [weak self] in
-            self?.performToggleRecording(cs: cs)
+            self?.performStartRecording(cs: cs)
         }
     }
 
@@ -412,7 +477,7 @@ final class CameraManager: NSObject {
     /// session mid-take. The UI-facing guard here is cooperative; the
     /// authoritative one is `applyFormat`'s own check on `sessionQueue`.
     func setFormat(_ format: CineFormat) {
-        guard !isRecording else {
+        guard !isOrientationLocked else {
             lastError = "Can't change the recording format while recording."
             Logger.controls.notice("Format change rejected on main actor: recording in progress.")
             return
@@ -659,7 +724,7 @@ final class CameraManager: NSObject {
     nonisolated private func setupSession(cs: CameraSession, initialFormat: CineFormat) {
         // Never reconfigure inputs/outputs mid-recording — this is the guard
         // that keeps the microphone source locked while capturing.
-        guard !cs.movieOutput.isRecording else { return }
+        guard !cs.isOrientationLocked, !cs.movieOutput.isRecording else { return }
 
         guard !cs.isConfigured else {
             if !cs.session.isRunning { cs.session.startRunning() }
@@ -795,7 +860,7 @@ final class CameraManager: NSObject {
     /// cooperative — a recording could start in the gap before this reaches
     /// the queue) before touching anything.
     nonisolated private func applyFormat(_ format: CineFormat, cs: CameraSession) {
-        guard !cs.movieOutput.isRecording else {
+        guard !cs.isOrientationLocked, !cs.movieOutput.isRecording else {
             Logger.controls.notice("Format change rejected on sessionQueue: recording started before this reached the queue.")
             DispatchQueue.main.async { [weak self] in
                 self?.lastError = "Can't change the recording format while recording."
@@ -1287,21 +1352,18 @@ final class CameraManager: NSObject {
         connection.applyRotationAngle(0, source: "HDMI", device: cs.videoDevice)
     }
 
-    nonisolated private func performToggleRecording(cs: CameraSession) {
-        guard cs.isConfigured else {
-            Logger.recording.error("Session not configured — cannot record.")
-            return
-        }
-
-        if cs.movieOutput.isRecording {
-            Logger.recording.notice("Stopping recording.")
-            cs.movieOutput.stopRecording()
+    nonisolated private func performStartRecording(cs: CameraSession) {
+        guard cs.isConfigured, cs.session.isRunning,
+              !cs.movieOutput.isRecording, !cs.isOrientationLocked else {
+            Logger.recording.error("Recording rejected: session unavailable or already recording.")
+            cs.onSaveError?("The camera couldn't start recording. Please try again.")
+            cs.onRecordingStateChange?(false)
             return
         }
 
         Logger.recording.notice("Starting recording; locking orientation.")
-        // Freeze orientation for the duration of the recording — the safety
-        // net covering camera preview, recording, and HDMI output together.
+        // Freeze the movie connection before starting. The phone interface
+        // and preview are already locked; HDMI stays fixed independently.
         cs.isOrientationLocked = true
 
         let outputURL = RecordingURL.makeTemporaryMovieURL()

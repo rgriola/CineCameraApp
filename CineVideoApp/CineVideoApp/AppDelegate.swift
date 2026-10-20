@@ -8,59 +8,90 @@
 import UIKit
 import OSLog
 
-/// Shared flag consulted by `AppDelegate` to restrict interface rotation while
-/// recording is active. UIKit on iOS 18 calls delegate rotation queries on the
-/// main actor, so this is safe to read/write without extra synchronization.
+/// Phone-only interface lock. The preview supplies its own scene; HDMI must
+/// never be used to infer the phone's orientation or inherit its lock.
 @MainActor
 enum OrientationLock {
-    private(set) static var isLocked = false
-    private(set) static var lockedMask: UIInterfaceOrientationMask = .portrait
+    private static weak var lockedScene: UIWindowScene?
+    private(set) static var lockedMask: UIInterfaceOrientationMask?
+    static var isLocked: Bool { lockedMask != nil }
 
-    /// Freezes the app to whichever orientation (portrait or landscape right)
-    /// the device currently reports. Called when recording starts.
-    static func lock() {
-        let scene = UIApplication.shared
-            .connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first
-        let current = scene.map(currentInterfaceOrientation) ?? .portrait
+    enum LockError: LocalizedError {
+        case cameraSceneUnavailable
+        case unsupportedOrientation
+        case alreadyLocked
 
-        lockedMask = current.isLandscape ? .landscapeRight : .portrait
-        isLocked = true
-        Logger.orientation.notice("Orientation locked to \(String(describing: lockedMask), privacy: .public).")
-        requestUpdate()
-    }
-
-    /// `UIWindowScene.interfaceOrientation` was deprecated in iOS 26 in favor
-    /// of `effectiveGeometry.interfaceOrientation`, which isn't available at
-    /// this app's iOS 18 deployment target. Isolated here (itself marked
-    /// deprecated) so the warning doesn't leak out to `lock()`'s call site.
-    @available(iOS, deprecated: 26.0, message: "No iOS 18-compatible replacement yet; intentional.")
-    private static func currentInterfaceOrientation(for scene: UIWindowScene) -> UIInterfaceOrientation {
-        scene.interfaceOrientation
-    }
-
-    /// Releases the lock, allowing the device to rotate freely again between
-    /// Portrait and Landscape Right. Called when recording stops.
-    static func unlock() {
-        isLocked = false
-        Logger.orientation.notice("Orientation unlocked.")
-        requestUpdate()
-    }
-
-    private static func requestUpdate() {
-        for scene in UIApplication.shared.connectedScenes {
-            guard let windowScene = scene as? UIWindowScene else { continue }
-            for window in windowScene.windows {
-                window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        var errorDescription: String? {
+            switch self {
+            case .cameraSceneUnavailable:
+                "The camera screen isn't active. Return to the camera and try recording again."
+            case .unsupportedOrientation:
+                "The camera orientation isn't ready. Hold the phone in portrait or landscape right and try again."
+            case .alreadyLocked:
+                "A recording is already starting or in progress."
             }
+        }
+    }
+
+    static func mask(for orientation: UIInterfaceOrientation) throws -> UIInterfaceOrientationMask {
+        switch orientation {
+        case .portrait: return .portrait
+        case .landscapeRight: return .landscapeRight
+        default: throw LockError.unsupportedOrientation
+        }
+    }
+
+    static func supportedMask(
+        for role: UISceneSession.Role?,
+        phoneLock: UIInterfaceOrientationMask?
+    ) -> UIInterfaceOrientationMask {
+        if role == .windowExternalDisplayNonInteractive || role == .windowExternalDisplay {
+            return .landscapeRight
+        }
+        return phoneLock ?? [.portrait, .landscapeRight]
+    }
+
+    static func lock(in scene: UIWindowScene?) throws {
+        guard !isLocked else { throw LockError.alreadyLocked }
+        guard let scene, scene.session.role == .windowApplication,
+              scene.activationState == .foregroundActive else {
+            throw LockError.cameraSceneUnavailable
+        }
+        let current: UIInterfaceOrientation
+        if #available(iOS 26.0, *) {
+            current = scene.effectiveGeometry.interfaceOrientation
+        } else {
+            current = scene.interfaceOrientation
+        }
+        lockedMask = try mask(for: current)
+        lockedScene = scene
+        Logger.orientation.notice("Phone orientation locked: scene=\(scene.session.persistentIdentifier, privacy: .public), role=\(scene.session.role.rawValue, privacy: .public), orientation=\(current.rawValue, privacy: .public).")
+        requestUpdate(in: scene)
+    }
+
+    static func unlock() {
+        let scene = lockedScene
+        lockedMask = nil
+        lockedScene = nil
+        Logger.orientation.notice("Phone orientation unlocked.")
+        if let scene { requestUpdate(in: scene) }
+    }
+
+    static func supportedMask(for window: UIWindow?) -> UIInterfaceOrientationMask {
+        let scene = window?.windowScene
+        let phoneLock = scene != nil && scene === lockedScene ? lockedMask : nil
+        return supportedMask(for: scene?.session.role, phoneLock: phoneLock)
+    }
+
+    private static func requestUpdate(in scene: UIWindowScene) {
+        for window in scene.windows {
+            window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         }
     }
 }
 
-/// Minimal delegate whose sole job is to enforce the app-wide orientation
-/// restriction: Portrait + Landscape Right only, further narrowed to whichever
-/// single orientation is locked while recording.
+/// The phone supports Portrait + Landscape Right, narrowed during recording.
+/// External-display windows stay landscape independently of that phone lock.
 ///
 /// The HDMI/external-display mirror no longer needs anything from this
 /// delegate — `ExternalDisplaySceneDelegate` (registered statically in
@@ -71,6 +102,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
     ) -> UIInterfaceOrientationMask {
-        OrientationLock.isLocked ? OrientationLock.lockedMask : [.portrait, .landscapeRight]
+        OrientationLock.supportedMask(for: window)
     }
 }

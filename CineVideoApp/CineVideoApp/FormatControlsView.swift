@@ -34,9 +34,9 @@ struct FormatControlsView: View {
         }
         // D6: format changes are hard-blocked while recording, at both the
         // UI and service layer — this is the UI half.
-        .disabled(cameraManager.isRecording)
-        .opacity(cameraManager.isRecording ? 0.3 : 1.0)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: cameraManager.isRecording)
+        .disabled(cameraManager.isOrientationLocked)
+        .opacity(cameraManager.isOrientationLocked ? 0.3 : 1.0)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: cameraManager.isOrientationLocked)
     }
 
     private var statusPill: some View {
@@ -71,7 +71,11 @@ struct FormatControlsView: View {
         .buttonStyle(.bordered)
         .accessibilityLabel("Recording resolution")
         .accessibilityValue(activeResolution.rawValue)
-        .accessibilityHint("Switches to \(next.rawValue) recording")
+        .accessibilityHint(
+            cameraManager.isOrientationLocked
+                ? "Resolution can't be changed until recording finishes."
+                : "Switches to \(next.rawValue) recording"
+        )
     }
 
     private var frameRatePicker: some View {
@@ -92,6 +96,11 @@ struct FormatControlsView: View {
         // avoids clipping "24p"/"30p" at larger Dynamic Type sizes.
         .frame(minWidth: 120, minHeight: 44)
         .accessibilityLabel("Frame rate")
+        .accessibilityHint(
+            cameraManager.isOrientationLocked
+                ? "Frame rate can't be changed until recording finishes."
+                : "Selects the recording frame rate."
+        )
     }
 }
 

@@ -193,10 +193,14 @@ struct CameraScreen: View {
         // `FormatControlsView`'s own `.disabled(isRecording)` so the entry
         // point itself reflects that instead of opening a panel full of
         // controls that'll immediately reject input.
-        .disabled(cameraManager.isRecording)
+        .disabled(cameraManager.isOrientationLocked)
         .accessibilityLabel("Recording format")
         .accessibilityValue(formatLabel)
-        .accessibilityHint("Opens recording format and frame rate controls.")
+        .accessibilityHint(
+            cameraManager.isOrientationLocked
+                ? "Format controls are unavailable until recording finishes."
+                : "Opens recording format and frame rate controls."
+        )
         .accessibilityFocused($focusedTarget, equals: .formatTrigger)
     }
 
@@ -273,8 +277,12 @@ struct CameraScreen: View {
                 .font(.system(size: 56))
                 .foregroundStyle(cameraManager.isRecording ? .red : .white)
         }
-        .disabled(!cameraManager.isSessionRunning)
+        .disabled(!cameraManager.isSessionRunning || cameraManager.recordingPhase.isTransitioning)
         .accessibilityLabel(cameraManager.isRecording ? "Stop recording" : "Start recording")
+        .accessibilityValue(
+            cameraManager.recordingPhase == .starting ? "Starting recording"
+                : cameraManager.recordingPhase == .stopping ? "Finishing recording" : ""
+        )
     }
 
     /// Compact, persistent AE/LOCK toggle badge — the exposure control
