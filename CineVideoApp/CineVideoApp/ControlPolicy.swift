@@ -84,6 +84,14 @@ nonisolated enum ZoomPolicy {
     }
 
     private static let stopEpsilon: CGFloat = 1e-4
+
+    /// Whether `displayed` is close enough to `preset` to count as "on" that
+    /// lens stop, DISPLAY space. Used to highlight the active preset button —
+    /// a tolerance is needed because a ramp settling or `displayVideoZoomFactorMultiplier`
+    /// rounding rarely lands on the exact floating-point value.
+    static func isPreset(_ displayed: CGFloat, closeTo preset: CGFloat, tolerance: CGFloat = 0.05) -> Bool {
+        abs(displayed - preset) <= tolerance
+    }
 }
 
 nonisolated enum ExposurePolicy {

@@ -47,6 +47,12 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     nonisolated(unsafe) var captureRotationCoordinator: AVCaptureDevice.RotationCoordinator?
     nonisolated(unsafe) var captureRotationObservation: NSKeyValueObservation?
 
+    // Tracks the live zoom factor (Phase 3) so the published control
+    // snapshot reflects reality during a ramp, a pinch gesture, or any other
+    // zoom change not initiated through `CameraManager`'s own methods —
+    // `videoZoomFactor` is documented as KVO-observable for exactly this.
+    nonisolated(unsafe) var zoomObservation: NSKeyValueObservation?
+
     // Set true for the duration of a recording. While locked, live rotation
     // updates are ignored — this is the safety net that freezes camera
     // preview, recording, and HDMI output orientation during capture.
@@ -397,6 +403,46 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Sets zoom to an absolute DISPLAY-space value (e.g. a slider drag or a
+    /// pinch gesture, sampled continuously). Unlike format changes, zoom
+    /// remains available **during recording** (D6) — a cine operator pulls
+    /// zoom mid-take. Assigning `videoZoomFactor` directly cancels any
+    /// in-flight ramp and snaps to the new value (documented
+    /// `AVCaptureDevice` behavior), so no separate cancel call is needed here.
+    func setZoom(displayed: CGFloat) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.applyZoom(to: device, displayed: displayed, context: "manual")
+        }
+    }
+
+    /// Smoothly ramps zoom to a DISPLAY-space value — intended for discrete
+    /// lens-preset taps, where an eased transition reads better than an
+    /// instant jump. Continuous slider/pinch drags should call
+    /// `setZoom(displayed:)` directly for 1:1 responsiveness. `rate` follows
+    /// `AVCaptureDevice`'s doubling-per-second convention (a rate of 1.0
+    /// doubles the magnification every second); the default is tuned for a
+    /// quick-but-eased preset snap, not a continuous drag.
+    func rampZoom(toDisplayed displayed: CGFloat, rate: Float = 4.0) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performRampZoom(device: device, toDisplayed: displayed, rate: rate)
+        }
+    }
+
+    /// Eases out of an in-flight ramp without snapping to a new target — e.g.
+    /// if the operator grabs the slider mid-ramp. A direct `setZoom(displayed:)`
+    /// call doesn't need this itself; see that method's doc comment.
+    func cancelZoomRamp() {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performCancelZoomRamp(device: device)
+        }
+    }
+
     /// Escape hatch that lets other components (namely `ExternalDisplayController`,
     /// for adding/removing its audio-mirror output) safely mutate the capture
     /// session on the same serial queue `CameraManager` itself uses — never on
@@ -606,6 +652,10 @@ final class CameraManager: NSObject {
         // movie output's connection already exists.
         setupCaptureRotationCoordinator(cs: cs, device: videoDevice)
         lockHDMIToLandscape(cs: cs)
+        // Registered after the initial zoom anchor above, so startup doesn't
+        // produce a redundant KVO-triggered publish — the explicit publish
+        // just below already covers that first value.
+        observeZoomFactor(cs: cs, device: videoDevice)
 
         // Snapshotted here, on sessionQueue, after the format and zoom anchor
         // have settled — the available zoom range is format-dependent.
@@ -756,6 +806,68 @@ final class CameraManager: NSObject {
             )
         } catch {
             Logger.controls.error("Failed to lock device to apply zoom (\(context, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Smoothly ramps zoom toward a DISPLAY-space target. `ramp(toVideoZoomFactor:withRate:)`
+    /// requires the same exclusive configuration lock as a direct assignment —
+    /// confirmed against `AVCaptureDevice.h`, which documents an
+    /// `NSGenericException` without it.
+    nonisolated private func performRampZoom(device: AVCaptureDevice, toDisplayed displayed: CGFloat, rate: Float) {
+        let deviceFactor = ZoomPolicy.clamp(
+            ZoomPolicy.deviceFactor(fromDisplayed: displayed, multiplier: device.displayVideoZoomFactorMultiplier),
+            min: device.minAvailableVideoZoomFactor,
+            max: device.maxAvailableVideoZoomFactor
+        )
+        do {
+            try device.lockForConfiguration()
+            device.ramp(toVideoZoomFactor: deviceFactor, withRate: rate)
+            device.unlockForConfiguration()
+            Logger.controls.info(
+                "Ramping zoom to device factor \(deviceFactor, privacy: .public) (displayed \(displayed, privacy: .public)×) at rate \(rate, privacy: .public)."
+            )
+        } catch {
+            Logger.controls.error("Failed to lock device to ramp zoom: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Eases out of an in-flight ramp. Also requires `lockForConfiguration()` —
+    /// same documented exception as the ramp call itself.
+    nonisolated private func performCancelZoomRamp(device: AVCaptureDevice) {
+        do {
+            try device.lockForConfiguration()
+            device.cancelVideoZoomRamp()
+            device.unlockForConfiguration()
+            Logger.controls.info("Canceled in-flight zoom ramp.")
+        } catch {
+            Logger.controls.error("Failed to lock device to cancel zoom ramp: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Key-value observes `videoZoomFactor` so the published control snapshot
+    /// tracks the lens continuously — during a ramp, a pinch gesture, or any
+    /// change not initiated through `CameraManager`'s own methods. Registered
+    /// once per device lifetime; mirrors `setupCaptureRotationCoordinator`'s
+    /// observation pattern, including the deliberate hop back onto
+    /// `sessionQueue` inside the callback — KVO notifications aren't
+    /// guaranteed to arrive on the thread the mutation happened on.
+    nonisolated private func observeZoomFactor(cs: CameraSession, device: AVCaptureDevice) {
+        cs.zoomObservation = device.observe(\.videoZoomFactor, options: [.new]) { [weak self] device, _ in
+            guard let self else { return }
+            self.sessionQueue.async {
+                self.publishControlSnapshot(for: device)
+            }
+        }
+    }
+
+    /// Builds a fresh control snapshot and publishes it to the main actor.
+    /// Shared by the zoom entry points, which don't also need to touch
+    /// `activeFormat`/persistence — `setupSession`/`applyFormat` publish
+    /// those together and build their own snapshot inline.
+    nonisolated private func publishControlSnapshot(for device: AVCaptureDevice) {
+        let snapshot = Self.makeControlSnapshot(for: device)
+        DispatchQueue.main.async { [weak self] in
+            self?.controls = snapshot
         }
     }
 

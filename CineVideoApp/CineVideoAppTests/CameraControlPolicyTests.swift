@@ -221,6 +221,28 @@ struct ZoomPresetStopsTests {
     }
 }
 
+struct ZoomIsPresetTests {
+
+    @Test("within the default tolerance counts as the same preset")
+    func withinTolerance() {
+        #expect(ZoomPolicy.isPreset(1.02, closeTo: 1.0))
+        #expect(ZoomPolicy.isPreset(0.98, closeTo: 1.0))
+        #expect(ZoomPolicy.isPreset(1.0, closeTo: 1.0))
+    }
+
+    @Test("outside the default tolerance does not count as the same preset")
+    func outsideTolerance() {
+        #expect(!ZoomPolicy.isPreset(1.2, closeTo: 1.0))
+        #expect(!ZoomPolicy.isPreset(0.5, closeTo: 1.0))
+    }
+
+    @Test("a custom tolerance is honored")
+    func customTolerance() {
+        #expect(ZoomPolicy.isPreset(1.3, closeTo: 1.0, tolerance: 0.5))
+        #expect(!ZoomPolicy.isPreset(1.3, closeTo: 1.0, tolerance: 0.1))
+    }
+}
+
 struct ExposurePolicyTests {
 
     @Test("clamps bias below, within, and above the device range")
