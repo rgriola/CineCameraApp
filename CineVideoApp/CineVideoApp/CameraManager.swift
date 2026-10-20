@@ -246,8 +246,7 @@ final class CameraManager: NSObject {
     /// The recording format the device actually settled on, or `nil` if it is
     /// running something this app doesn't model (which the capture log flags
     /// as an error). Read back from the hardware rather than assumed, so it
-    /// can't claim Cine-HD on a device that failed to apply it. Still fixed to
-    /// Cine-HD in this phase; Phase 2 makes it user-selectable.
+    /// can't claim Cine-HD on a device that failed to apply it.
     private(set) var activeFormat: CineFormat?
 
     /// Device-derived manual-control state, refreshed from `sessionQueue`
@@ -255,6 +254,17 @@ final class CameraManager: NSObject {
     /// DISPLAY space (what the user sees, e.g. `1.0` == "1×") — see
     /// `ZoomPolicy` for why that distinction matters.
     private(set) var controls: CameraControlSnapshot = .placeholder
+
+    /// The last-known-good format, loaded at launch and updated whenever a
+    /// format change actually succeeds. `@ObservationIgnored` — these are a
+    /// persistence detail, not UI state; `activeFormat` above is what SwiftUI
+    /// should observe. `CaptureResolution`/`CaptureFrameRate`'s raw types
+    /// (`String`/`Int`) are exactly what lets `@AppStorage` bind them
+    /// directly, with no JSON encoding.
+    @ObservationIgnored
+    @AppStorage(CineFormat.StorageKey.resolution) private var persistedResolution: CaptureResolution = .hd1080
+    @ObservationIgnored
+    @AppStorage(CineFormat.StorageKey.frameRate) private var persistedFrameRate: CaptureFrameRate = .fps30
 
     var session: AVCaptureSession { cs.session }
 
@@ -371,6 +381,22 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Requests a new recording format (resolution + frame rate). Hard-blocked
+    /// while recording (D6) — format changes must never touch the capture
+    /// session mid-take. The UI-facing guard here is cooperative; the
+    /// authoritative one is `applyFormat`'s own check on `sessionQueue`.
+    func setFormat(_ format: CineFormat) {
+        guard !isRecording else {
+            lastError = "Can't change the recording format while recording."
+            Logger.controls.notice("Format change rejected on main actor: recording in progress.")
+            return
+        }
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            self?.applyFormat(format, cs: cs)
+        }
+    }
+
     /// Escape hatch that lets other components (namely `ExternalDisplayController`,
     /// for adding/removing its audio-mirror output) safely mutate the capture
     /// session on the same serial queue `CameraManager` itself uses — never on
@@ -462,14 +488,18 @@ final class CameraManager: NSObject {
     private func startSessionIfAuthorized() {
         guard isAuthorized else { return }
         let cs = self.cs
-        sessionQueue.async { [weak self] in self?.setupSession(cs: cs) }
+        // Read on the main actor — `persistedResolution`/`persistedFrameRate`
+        // are main-actor-isolated `@AppStorage` properties and must not be
+        // touched from `sessionQueue`.
+        let initialFormat = CineFormat(resolution: persistedResolution, frameRate: persistedFrameRate)
+        sessionQueue.async { [weak self] in self?.setupSession(cs: cs, initialFormat: initialFormat) }
     }
 
     // MARK: - nonisolated helpers (run on sessionQueue, never touch @MainActor properties)
 
     // `nonisolated` — Swift will not enforce @MainActor here, so
     // sessionQueue.async can call this without a Sendable-closure error.
-    nonisolated private func setupSession(cs: CameraSession) {
+    nonisolated private func setupSession(cs: CameraSession, initialFormat: CineFormat) {
         // Never reconfigure inputs/outputs mid-recording — this is the guard
         // that keeps the microphone source locked while capturing.
         guard !cs.movieOutput.isRecording else { return }
@@ -536,13 +566,17 @@ final class CameraManager: NSObject {
             // Dedicated queue, NOT sessionQueue — see videoDataOutputQueue's
             // doc comment.
             cs.videoDataOutput.setSampleBufferDelegate(cs, queue: videoDataOutputQueue)
+            // 🔒 Project invariant (D4): the HDMI mirror is always 1080p,
+            // independent of the selected recording resolution — see
+            // `pinHDMIOutputResolution`'s doc comment.
+            pinHDMIOutputResolution(cs: cs)
 
             cs.videoInput   = videoInput
             cs.audioInput   = audioInput
             cs.videoDevice  = videoDevice
             cs.isConfigured = true
 
-            applyCineHDFormat(to: videoDevice)
+            _ = assignFormat(initialFormat, to: videoDevice)
             applyHEVCCodec(cs: cs)
 
         } catch {
@@ -563,7 +597,7 @@ final class CameraManager: NSObject {
         // its ultra-wide 0.5× default. The same applies on the fallback path
         // where no format was assigned at all: the session's preset then
         // configures the input's format itself at commit time.
-        applyInitialZoomAnchor(to: videoDevice)
+        applyZoom(to: videoDevice, displayed: 1, context: "initial setup")
 
         cs.session.startRunning()
         Logger.camera.notice("Capture session configured and started.")
@@ -583,7 +617,85 @@ final class CameraManager: NSObject {
             self?.isSessionRunning = cs.session.isRunning
             self?.controls = snapshot
             self?.activeFormat = appliedFormat
+            // Persists what actually ran, not what was requested — so a
+            // relaunch after a fallback retries the format that worked.
+            if let appliedFormat {
+                self?.persistedResolution = appliedFormat.resolution
+                self?.persistedFrameRate = appliedFormat.frameRate
+            }
         }
+    }
+
+    /// `sessionQueue` counterpart to `setFormat`. Re-checks the recording
+    /// guard authoritatively (the main-actor check in `setFormat` is
+    /// cooperative — a recording could start in the gap before this reaches
+    /// the queue) before touching anything.
+    nonisolated private func applyFormat(_ format: CineFormat, cs: CameraSession) {
+        guard !cs.movieOutput.isRecording else {
+            Logger.controls.notice("Format change rejected on sessionQueue: recording started before this reached the queue.")
+            DispatchQueue.main.async { [weak self] in
+                self?.lastError = "Can't change the recording format while recording."
+            }
+            return
+        }
+        guard cs.isConfigured, let device = cs.videoDevice else {
+            Logger.controls.error("Format change rejected: capture session not configured yet.")
+            return
+        }
+
+        // Captured BEFORE touching the format — assigning `activeFormat`
+        // resets `videoZoomFactor` to 1.0 (see `applyZoom`), so this is what
+        // lets a format change preserve the operator's framing instead of
+        // silently snapping back to 1×.
+        let desiredZoomDisplayed = ZoomPolicy.displayed(
+            fromDeviceFactor: device.videoZoomFactor,
+            multiplier: device.displayVideoZoomFactorMultiplier
+        )
+
+        cs.session.beginConfiguration()
+        let applied = assignFormat(format, to: device)
+        cs.session.commitConfiguration()
+
+        guard applied != nil else {
+            // `assignFormat` already logged the specific failure; the device
+            // format itself never changed, so there's nothing to reapply.
+            DispatchQueue.main.async { [weak self] in
+                self?.lastError = "That format isn't supported on this device."
+            }
+            return
+        }
+
+        // D9: ordered re-application of everything a format change
+        // invalidates. MUST run after `commitConfiguration()` — see
+        // `setupSession`'s note on why `activeFormat` is deferred to commit.
+        reapplyFormatDependentState(to: device, cs: cs, desiredZoomDisplayed: desiredZoomDisplayed)
+
+        let snapshot = Self.makeControlSnapshot(for: device)
+        let appliedFormat = Self.currentCineFormat(of: device)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.controls = snapshot
+            self?.activeFormat = appliedFormat
+            if let appliedFormat {
+                self?.persistedResolution = appliedFormat.resolution
+                self?.persistedFrameRate = appliedFormat.frameRate
+            }
+        }
+    }
+
+    /// D9 — everything an `activeFormat` change invalidates, reapplied in
+    /// order: the zoom the operator had dialed in (format changes reset it
+    /// to 1.0), the HDMI 1080p pin (D4), and the movie output's codec
+    /// (cheap to re-verify; some resolution/codec combinations are
+    /// device-dependent). Must run after `commitConfiguration()`.
+    nonisolated private func reapplyFormatDependentState(
+        to device: AVCaptureDevice,
+        cs: CameraSession,
+        desiredZoomDisplayed: CGFloat
+    ) {
+        applyZoom(to: device, displayed: desiredZoomDisplayed, context: "format change")
+        pinHDMIOutputResolution(cs: cs)
+        applyHEVCCodec(cs: cs)
     }
 
     /// Reads back the format the device is genuinely running, mapped onto the
@@ -623,29 +735,27 @@ final class CameraManager: NSObject {
         return device
     }
 
-    /// Pins the starting zoom to the user-facing 1× framing.
-    ///
-    /// On a virtual device, `videoZoomFactor == 1.0` is the ULTRA-WIDE lens —
-    /// what the Camera app labels "0.5×". Leaving the default in place would
-    /// silently widen this app's framing the moment it moved off the
-    /// single-lens camera. The 1× anchor is `1.0 / displayVideoZoomFactorMultiplier`
-    /// (iOS 18+), which is exactly `1.0` on a single-lens device, so this is a
-    /// no-op there.
-    nonisolated private func applyInitialZoomAnchor(to device: AVCaptureDevice) {
-        let anchor = ZoomPolicy.clamp(
-            ZoomPolicy.deviceFactor(fromDisplayed: 1, multiplier: device.displayVideoZoomFactorMultiplier),
+    /// Sets the device's zoom to a user-facing (DISPLAY space) value, clamped
+    /// to whatever the device can currently do. Shared by session setup
+    /// (anchoring the starting 1× framing — see the call site's note on why
+    /// a virtual device defaults to the ultra-wide 0.5× otherwise) and format
+    /// changes (restoring the operator's zoom after `activeFormat` resets it
+    /// to 1.0 — see `applyFormat`).
+    nonisolated private func applyZoom(to device: AVCaptureDevice, displayed: CGFloat, context: String) {
+        let deviceFactor = ZoomPolicy.clamp(
+            ZoomPolicy.deviceFactor(fromDisplayed: displayed, multiplier: device.displayVideoZoomFactorMultiplier),
             min: device.minAvailableVideoZoomFactor,
             max: device.maxAvailableVideoZoomFactor
         )
         do {
             try device.lockForConfiguration()
-            device.videoZoomFactor = anchor
+            device.videoZoomFactor = deviceFactor
             device.unlockForConfiguration()
             Logger.controls.info(
-                "Anchored initial zoom to 1× (device factor \(anchor, privacy: .public), multiplier \(device.displayVideoZoomFactorMultiplier, privacy: .public))."
+                "Applied zoom (\(context, privacy: .public)): device factor \(deviceFactor, privacy: .public), displayed \(displayed, privacy: .public)×."
             )
         } catch {
-            Logger.controls.error("Failed to lock device to anchor initial zoom: \(error.localizedDescription, privacy: .public)")
+            Logger.controls.error("Failed to lock device to apply zoom (\(context, privacy: .public)): \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -667,53 +777,71 @@ final class CameraManager: NSObject {
         )
     }
 
-    /// Locks the active format to Cine-HD: 1920x1080 @ 30fps. Falls back to
-    /// leaving the device's current format untouched if no exact match exists
-    /// (all supported back cameras on iOS 18 targets have one).
-    nonisolated private func applyCineHDFormat(to device: AVCaptureDevice) {
-        let targetFrameRate = 30.0
-
-        // Map the device's real formats to value descriptors, then defer the
-        // pick to the pure `CineHDFormatSelector` (unit-tested in isolation).
-        let descriptors = device.formats.map { format -> CaptureFormatDescriptor in
+    /// Maps a device's real `AVCaptureDevice.Format` list into the pure value
+    /// descriptors `CaptureFormatSelector`/`FormatResolutionPolicy` operate on.
+    nonisolated private static func captureFormatDescriptors(for device: AVCaptureDevice) -> [CaptureFormatDescriptor] {
+        device.formats.map { format in
             let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            let ranges = format.videoSupportedFrameRateRanges.map {
-                $0.minFrameRate...$0.maxFrameRate
-            }
-            return CaptureFormatDescriptor(
-                width: dimensions.width,
-                height: dimensions.height,
-                frameRateRanges: ranges
-            )
+            let ranges = format.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }
+            return CaptureFormatDescriptor(width: dimensions.width, height: dimensions.height, frameRateRanges: ranges)
         }
+    }
 
-        guard let index = CineHDFormatSelector.selectIndex(
-            in: descriptors, targetFrameRate: targetFrameRate
-        ) else {
+    /// Resolves `requested` against the device's real formats and assigns the
+    /// result. Must run inside the caller's `beginConfiguration`/
+    /// `commitConfiguration` bracket (this method itself does not call
+    /// either) — matches how `AVCaptureDevice.activeFormat` is documented to
+    /// be set. Returns the format actually applied (which may differ from
+    /// `requested` — see `FormatResolutionPolicy`), or `nil` if nothing on
+    /// the device matches HD or 4K at all, in which case the device's
+    /// current format is left untouched.
+    nonisolated private func assignFormat(_ requested: CineFormat, to device: AVCaptureDevice) -> CineFormat? {
+        let descriptors = Self.captureFormatDescriptors(for: device)
+        guard let resolved = FormatResolutionPolicy.resolve(in: descriptors, requested: requested) else {
             // Escalated from a warning: since the capture device became a
-            // virtual multi-lens device, landing here means the app is
-            // recording at something other than Cine-HD. The actual
-            // dimensions are logged so the regression is diagnosable from
-            // Console rather than only visible in the footage.
+            // virtual multi-lens device, landing here means the app may be
+            // recording at something other than what was requested. The
+            // actual dimensions are logged so the regression is diagnosable
+            // from Console rather than only visible in the footage.
             let actual = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
             Logger.camera.error(
-                "No exact 1920x1080@30 format on \(device.localizedName, privacy: .public); leaving device format at \(actual.width, privacy: .public)x\(actual.height, privacy: .public)."
+                "No usable \(requested.resolution.rawValue, privacy: .public)/\(requested.frameRate.rawValue, privacy: .public)p format on \(device.localizedName, privacy: .public); leaving device format at \(actual.width, privacy: .public)x\(actual.height, privacy: .public)."
             )
-            return
+            return nil
         }
 
-        let format = device.formats[index]
-
+        let format = device.formats[resolved.index]
         do {
             try device.lockForConfiguration()
             device.activeFormat = format
-            device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
-            device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
+            let duration = CMTime(value: 1, timescale: CMTimeScale(resolved.applied.frameRate.rawValue))
+            device.activeVideoMinFrameDuration = duration
+            device.activeVideoMaxFrameDuration = duration
             device.unlockForConfiguration()
-            Logger.camera.info("Applied Cine-HD format: 1920x1080@30.")
+            Logger.camera.info(
+                "Applied format: \(resolved.applied.resolution.dimensionLabel, privacy: .public) @ \(resolved.applied.frameRate.displayLabel, privacy: .public)."
+            )
+            return resolved.applied
         } catch {
-            Logger.camera.error("Failed to lock device for Cine-HD format configuration: \(error.localizedDescription, privacy: .public)")
+            Logger.camera.error("Failed to lock device for format change: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
+    }
+
+    /// 🔒 Project invariant (D4): pins the HDMI mirror's video data output to
+    /// 1080p, deliberately independent of the selected recording resolution —
+    /// see `README.md`'s "HDMI output is always 1080p" note. Protects a
+    /// frame-delivery path that already shows drop pressure at 1080p from
+    /// ever being asked to carry raw 4K buffers, and keeps the external
+    /// monitor a stable signal the same way Blackmagic Camera's HDMI output
+    /// behaves. Idempotent and safe to call at any time — unlike
+    /// `activeFormat`, `videoSettings` isn't deferred to `commitConfiguration()`.
+    nonisolated private func pinHDMIOutputResolution(cs: CameraSession) {
+        cs.videoDataOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: 1920,
+            kCVPixelBufferHeightKey as String: 1080,
+        ]
     }
 
     /// Forces H.265/HEVC on the movie output's video connection, falling back

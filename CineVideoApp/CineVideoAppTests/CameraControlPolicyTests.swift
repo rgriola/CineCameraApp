@@ -65,20 +65,6 @@ struct CaptureFormatSelectorTests {
         #expect(CaptureFormatSelector.selectIndex(in: atMin, resolution: .hd1080, frameRate: .fps24) == nil)
     }
 
-    @Test("the CineHD shim matches the generalized selector for HD")
-    func shimMatchesGeneralSelector() {
-        let formats = [format(1280, 720), format(1920, 1080, fps: 24...30), format(1920, 1080)]
-        #expect(
-            CineHDFormatSelector.selectIndex(in: formats, targetFrameRate: 30) ==
-            CaptureFormatSelector.selectIndex(in: formats, resolution: .hd1080, frameRate: .fps30)
-        )
-        #expect(
-            CineHDFormatSelector.selectIndex(in: formats, targetFrameRate: 24) ==
-            CaptureFormatSelector.selectIndex(in: formats, resolution: .hd1080, frameRate: .fps24)
-        )
-        #expect(CineHDFormatSelector.selectIndex(in: [], targetFrameRate: 30) == nil)
-    }
-
     @Test("the Double overload still matches non-integral rates the enum cannot express")
     func nonIntegralRate() {
         let formats = [format(1920, 1080, fps: 29...30)]
@@ -508,5 +494,69 @@ struct CineFormatMatchingTests {
     func nilForNonFiniteRate() {
         #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: .nan) == nil)
         #expect(CineFormat.matching(width: 1920, height: 1080, frameRate: .infinity) == nil)
+    }
+}
+
+struct FormatResolutionPolicyTests {
+
+    private func format(_ width: Int32, _ height: Int32, fps: ClosedRange<Double> = 1...30) -> CaptureFormatDescriptor {
+        CaptureFormatDescriptor(width: width, height: height, frameRateRanges: [fps])
+    }
+
+    @Test("resolves an exact match with no fallback")
+    func exactMatch() {
+        let formats = [format(1920, 1080, fps: 24...30), format(3840, 2160, fps: 24...30)]
+        let resolved = FormatResolutionPolicy.resolve(in: formats, requested: CineFormat(resolution: .uhd4K, frameRate: .fps30))
+        #expect(resolved?.index == 1)
+        #expect(resolved?.applied == CineFormat(resolution: .uhd4K, frameRate: .fps30))
+    }
+
+    @Test("falls back to the same resolution's sustainable rate when the requested rate is unsupported")
+    func sameResolutionFrameRateFallback() {
+        // 4K exists but only at 24fps — requesting 4K/30 should degrade to 4K/24, not jump resolution.
+        let formats = [format(1920, 1080, fps: 24...30), format(3840, 2160, fps: 1...24)]
+        let resolved = FormatResolutionPolicy.resolve(in: formats, requested: CineFormat(resolution: .uhd4K, frameRate: .fps30))
+        #expect(resolved?.index == 1)
+        #expect(resolved?.applied == CineFormat(resolution: .uhd4K, frameRate: .fps24))
+    }
+
+    @Test("falls back to HD at the requested rate when the resolution is entirely absent")
+    func resolutionFallbackToHD() {
+        let formats = [format(1920, 1080, fps: 24...30)]
+        let resolved = FormatResolutionPolicy.resolve(in: formats, requested: CineFormat(resolution: .uhd4K, frameRate: .fps24))
+        #expect(resolved?.index == 0)
+        #expect(resolved?.applied == CineFormat(resolution: .hd1080, frameRate: .fps24))
+    }
+
+    @Test("falls back to HD's own sustainable rate as a last resort")
+    func resolutionAndFrameRateFallbackToHD() {
+        let formats = [format(1920, 1080, fps: 1...24)]
+        let resolved = FormatResolutionPolicy.resolve(in: formats, requested: CineFormat(resolution: .uhd4K, frameRate: .fps30))
+        #expect(resolved?.index == 0)
+        #expect(resolved?.applied == CineFormat(resolution: .hd1080, frameRate: .fps24))
+    }
+
+    @Test("does not retry HD when HD itself was the request that failed")
+    func noRedundantRetryWhenHDRequested() {
+        let formats = [format(3840, 2160, fps: 24...30)]
+        #expect(FormatResolutionPolicy.resolve(in: formats, requested: CineFormat(resolution: .hd1080, frameRate: .fps30)) == nil)
+    }
+
+    @Test("returns nil when neither the requested resolution nor HD exists at all")
+    func nilWhenNothingUsable() {
+        let formats = [format(1280, 720, fps: 1...30)]
+        #expect(FormatResolutionPolicy.resolve(in: formats, requested: CineFormat(resolution: .uhd4K, frameRate: .fps30)) == nil)
+    }
+
+    @Test("returns nil for an empty format list")
+    func nilForEmpty() {
+        #expect(FormatResolutionPolicy.resolve(in: [], requested: .default) == nil)
+    }
+
+    @Test("prefers the first matching index when multiple identical descriptors exist")
+    func firstIndexWins() {
+        let formats = [format(1920, 1080, fps: 24...30), format(1920, 1080, fps: 24...30)]
+        let resolved = FormatResolutionPolicy.resolve(in: formats, requested: CineFormat(resolution: .hd1080, frameRate: .fps30))
+        #expect(resolved?.index == 0)
     }
 }

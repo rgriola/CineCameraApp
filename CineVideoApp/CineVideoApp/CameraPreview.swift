@@ -129,8 +129,8 @@ struct CameraPreview: UIViewRepresentable {
         func setupPreviewLayer(session: AVCaptureSession) {
             let layer = AVCaptureVideoPreviewLayer(session: session)
             // `.resizeAspect`, not `.resizeAspectFill`: the capture format is
-            // locked to a fixed 16:9 (1920x1080) frame in
-            // `CameraManager.applyCineHDFormat`, which rarely matches a
+            // locked to a 16:9 frame (HD or 4K, both 16:9 — see
+            // `CameraManager.assignFormat`), which rarely matches a
             // device screen's aspect ratio. `.resizeAspectFill` scales the
             // frame up to fill the view and crops whatever overflows,
             // silently hiding real, recorded edges of the frame.

@@ -54,9 +54,7 @@ nonisolated enum CaptureFormatSelector {
     }
 
     /// `Double` overload — the path for non-integral rates (29.97) that
-    /// `CaptureFrameRate` deliberately can't express, and what the
-    /// `CineHDFormatSelector` shim forwards through so its semantics are
-    /// preserved exactly.
+    /// `CaptureFrameRate` deliberately can't express.
     static func selectIndex(
         in formats: [CaptureFormatDescriptor],
         resolution: CaptureResolution,
@@ -80,19 +78,47 @@ nonisolated enum CaptureFormatSelector {
     }
 }
 
-/// Cine-HD (1920x1080) selection. Retained as a thin shim over
-/// `CaptureFormatSelector` so the existing `applyCineHDFormat` call site and
-/// its tests keep working unchanged until Phase 2 migrates them.
-nonisolated enum CineHDFormatSelector {
-    /// Index of the first matching descriptor, or `nil` if none matches — the
-    /// caller then leaves the device's default format untouched.
-    static func selectIndex(
+/// Resolves a requested (resolution, frame rate) pair against a device's real
+/// formats, falling back in a defined order rather than rejecting outright:
+/// the same resolution at the frame rate it can actually sustain, then HD at
+/// the requested rate, then HD at its own sustainable rate. Reports back
+/// what was actually resolved — callers must never assume the requested
+/// format is what gets applied.
+nonisolated enum FormatResolutionPolicy {
+    static func resolve(
         in formats: [CaptureFormatDescriptor],
-        targetFrameRate: Double
-    ) -> Int? {
-        CaptureFormatSelector.selectIndex(
-            in: formats, resolution: .hd1080, frameRate: targetFrameRate
-        )
+        requested: CineFormat
+    ) -> (index: Int, applied: CineFormat)? {
+        if let index = CaptureFormatSelector.selectIndex(
+            in: formats, resolution: requested.resolution, frameRate: requested.frameRate
+        ) {
+            return (index, requested)
+        }
+        if let fallback = frameRateFallback(in: formats, resolution: requested.resolution) {
+            return fallback
+        }
+        // Only retry at HD if a different resolution was requested — if HD
+        // itself was requested and failed above, there is nothing left to try.
+        guard requested.resolution != .hd1080 else { return nil }
+        if let index = CaptureFormatSelector.selectIndex(
+            in: formats, resolution: .hd1080, frameRate: requested.frameRate
+        ) {
+            return (index, CineFormat(resolution: .hd1080, frameRate: requested.frameRate))
+        }
+        return frameRateFallback(in: formats, resolution: .hd1080)
+    }
+
+    /// First descriptor matching `resolution` at any frame rate, paired with
+    /// the highest `CaptureFrameRate` it can actually sustain.
+    private static func frameRateFallback(
+        in formats: [CaptureFormatDescriptor],
+        resolution: CaptureResolution
+    ) -> (index: Int, applied: CineFormat)? {
+        let dimensions = resolution.dimensions
+        guard let index = formats.firstIndex(where: { $0.width == dimensions.width && $0.height == dimensions.height })
+        else { return nil }
+        guard let rate = CaptureFormatSelector.fallbackFrameRate(for: formats[index]) else { return nil }
+        return (index, CineFormat(resolution: resolution, frameRate: rate))
     }
 }
 
