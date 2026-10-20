@@ -60,6 +60,19 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // KVO-observable for exactly this.
     nonisolated(unsafe) var focusModeObservation: NSKeyValueObservation?
 
+    // Tracks `exposureMode` (Phase 5) so the published snapshot's
+    // `isExposureLocked` reflects the automatic `.autoExpose` → `.locked`
+    // transition `exposeAndMeter(at:)` settles into on its own — mirrors
+    // `focusModeObservation` exactly; `exposureMode` is documented
+    // KVO-observable for the same reason.
+    nonisolated(unsafe) var exposureModeObservation: NSKeyValueObservation?
+
+    // Tracks `exposureTargetBias` (Phase 5) so the published snapshot's
+    // `exposureBias` reflects the value once `setExposureTargetBias(_:completionHandler:)`
+    // actually takes effect, the same way `zoomObservation` tracks a ramp
+    // settling rather than publishing an optimistic value up front.
+    nonisolated(unsafe) var exposureBiasObservation: NSKeyValueObservation?
+
     // Set true for the duration of a recording. While locked, live rotation
     // updates are ignored — this is the safety net that freezes camera
     // preview, recording, and HDMI output orientation during capture.
@@ -483,6 +496,64 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Tap-to-expose: meters once at `devicePoint` — DEVICE space, same
+    /// conversion as `focus(at:)` (D5). Sets a one-shot `.autoExpose` — the
+    /// device itself then settles into `.locked` on its own (documented
+    /// `AVCaptureDevice` behavior, symmetric with `.autoFocus`), which
+    /// `observeExposureMode`'s KVO picks up; this method doesn't publish an
+    /// optimistic "locked" state itself. Allowed live during recording (D6).
+    func exposeAndMeter(at devicePoint: CGPoint) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performExposeAndMeter(device: device, at: devicePoint)
+        }
+    }
+
+    /// AE/locked toggle: switches `exposureMode` between
+    /// `.continuousAutoExposure` (`enabled == true`) and `.locked`
+    /// (`enabled == false`), freezing exposure wherever it currently sits.
+    /// Stays independently togglable from focus, per the plan (unlike
+    /// PromptCam, which combines focus and exposure lock into one control).
+    /// Allowed live during recording (D6).
+    func setAutoExposure(_ enabled: Bool) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performSetAutoExposure(enabled, device: device)
+        }
+    }
+
+    /// Sets EV bias to an absolute value — e.g. a slider drag, sampled
+    /// continuously. Clamped against the device's reported
+    /// `min`/`maxExposureTargetBias` before it ever reaches
+    /// `setExposureTargetBias(_:completionHandler:)`. EV bias remains
+    /// available during recording (D6), same as zoom and focus.
+    func setExposureBias(_ ev: Float) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performSetExposureBias(ev, device: device)
+        }
+    }
+
+    /// Incremental EV bias adjustment (e.g. a +/- stepper). Reads the
+    /// device's own current `exposureTargetBias` on `sessionQueue` rather
+    /// than trusting a possibly-stale value the caller might be holding, then
+    /// applies the same clamped absolute set as `setExposureBias(_:)`.
+    func adjustExposureBias(by delta: Float) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performSetExposureBias(device.exposureTargetBias + delta, device: device)
+        }
+    }
+
+    /// Resets EV bias to neutral (0.0) — e.g. the EV panel's Reset button.
+    func resetExposureBias() {
+        setExposureBias(0)
+    }
+
     /// Escape hatch that lets other components (namely `ExternalDisplayController`,
     /// for adding/removing its audio-mirror output) safely mutate the capture
     /// session on the same serial queue `CameraManager` itself uses — never on
@@ -697,6 +768,8 @@ final class CameraManager: NSObject {
         // just below already covers that first value.
         observeZoomFactor(cs: cs, device: videoDevice)
         observeFocusMode(cs: cs, device: videoDevice)
+        observeExposureMode(cs: cs, device: videoDevice)
+        observeExposureBias(cs: cs, device: videoDevice)
 
         // Snapshotted here, on sessionQueue, after the format and zoom anchor
         // have settled — the available zoom range is format-dependent.
@@ -957,6 +1030,96 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Tap-to-expose. `exposurePointOfInterest` must be set *before*
+    /// `exposureMode` for the new point to take effect — documented on
+    /// `AVCaptureDevice`, symmetric with `performFocus`'s point-before-mode
+    /// requirement.
+    nonisolated private func performExposeAndMeter(device: AVCaptureDevice, at devicePoint: CGPoint) {
+        guard device.isExposurePointOfInterestSupported, device.isExposureModeSupported(.autoExpose) else {
+            Logger.controls.notice("Tap-to-expose skipped: unsupported on this device.")
+            return
+        }
+        let clamped = ExposurePolicy.clampDevicePoint(devicePoint)
+        do {
+            try device.lockForConfiguration()
+            device.exposurePointOfInterest = clamped
+            device.exposureMode = .autoExpose
+            device.unlockForConfiguration()
+            Logger.controls.info(
+                "Tap-to-expose at device point (\(clamped.x, privacy: .public), \(clamped.y, privacy: .public))."
+            )
+        } catch {
+            Logger.controls.error("Failed to lock device for tap-to-expose: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// AE/locked toggle. `enabled` selects `.continuousAutoExposure`;
+    /// disabling it selects `.locked`, freezing exposure wherever it
+    /// currently sits — no point-of-interest change, unlike
+    /// `performExposeAndMeter`.
+    nonisolated private func performSetAutoExposure(_ enabled: Bool, device: AVCaptureDevice) {
+        let desired: AVCaptureDevice.ExposureMode = enabled ? .continuousAutoExposure : .locked
+        guard device.isExposureModeSupported(desired) else {
+            Logger.controls.notice("Exposure mode \(String(describing: desired), privacy: .public) unsupported on this device.")
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            device.exposureMode = desired
+            device.unlockForConfiguration()
+            Logger.controls.info("Set exposure mode to \(String(describing: desired), privacy: .public).")
+        } catch {
+            Logger.controls.error("Failed to lock device to set exposure mode: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Sets EV bias to a clamped absolute value. `setExposureTargetBias`
+    /// throws `NSRangeException` for an out-of-range value and
+    /// `NSGenericException` without a configuration lock — both documented
+    /// on `AVCaptureDevice` — so the clamp happens first and the lock
+    /// brackets the call. No explicit completion handler: `observeExposureBias`'s
+    /// KVO publishes the settled value, mirroring how `applyZoom`/`performRampZoom`
+    /// rely on `observeZoomFactor` rather than their own completion.
+    nonisolated private func performSetExposureBias(_ ev: Float, device: AVCaptureDevice) {
+        let clamped = ExposurePolicy.clampBias(ev, min: device.minExposureTargetBias, max: device.maxExposureTargetBias)
+        do {
+            try device.lockForConfiguration()
+            device.setExposureTargetBias(clamped, completionHandler: nil)
+            device.unlockForConfiguration()
+            Logger.controls.info("Set exposure bias to \(clamped, privacy: .public) EV.")
+        } catch {
+            Logger.controls.error("Failed to lock device to set exposure bias: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Key-value observes `exposureMode` so the published snapshot's
+    /// `isExposureLocked` tracks reality — including the automatic
+    /// `.autoExpose` → `.locked` transition `exposeAndMeter(at:)` settles
+    /// into on its own. Mirrors `observeFocusMode`'s pattern exactly,
+    /// including the deliberate hop back onto `sessionQueue`.
+    nonisolated private func observeExposureMode(cs: CameraSession, device: AVCaptureDevice) {
+        cs.exposureModeObservation = device.observe(\.exposureMode, options: [.new]) { [weak self] device, _ in
+            guard let self else { return }
+            self.sessionQueue.async {
+                self.publishControlSnapshot(for: device)
+            }
+        }
+    }
+
+    /// Key-value observes `exposureTargetBias` so the published snapshot's
+    /// `exposureBias` reflects the value once `setExposureTargetBias`
+    /// actually takes effect (it's an asynchronous hardware operation, same
+    /// as a zoom ramp) rather than an optimistic value `performSetExposureBias`
+    /// would otherwise have to publish itself.
+    nonisolated private func observeExposureBias(cs: CameraSession, device: AVCaptureDevice) {
+        cs.exposureBiasObservation = device.observe(\.exposureTargetBias, options: [.new]) { [weak self] device, _ in
+            guard let self else { return }
+            self.sessionQueue.async {
+                self.publishControlSnapshot(for: device)
+            }
+        }
+    }
+
     /// Builds a fresh control snapshot and publishes it to the main actor.
     /// Shared by the zoom entry points, which don't also need to touch
     /// `activeFormat`/persistence — `setupSession`/`applyFormat` publish
@@ -983,7 +1146,8 @@ final class CameraManager: NSObject {
             isMultiLensDevice: device.isVirtualDevice,
             isFocusLocked: device.focusMode == .locked,
             isFocusSupported: device.isFocusModeSupported(.continuousAutoFocus) && device.isFocusModeSupported(.locked),
-            isExposureLocked: device.exposureMode == .locked
+            isExposureLocked: device.exposureMode == .locked,
+            isExposureSupported: device.isExposureModeSupported(.continuousAutoExposure) && device.isExposureModeSupported(.locked)
         )
     }
 

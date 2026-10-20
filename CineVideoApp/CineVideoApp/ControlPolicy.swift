@@ -103,6 +103,16 @@ nonisolated enum ExposurePolicy {
         guard !value.isNaN else { return lower }
         return Swift.min(Swift.max(value, lower), upper)
     }
+
+    /// Clamps a tap-to-expose point (Phase 5's `exposeAndMeter(at:)`) into the
+    /// unit square. `exposurePointOfInterest` documents the exact same
+    /// `(0,0)`–`(1,1)` unit square as `focusPointOfInterest`, so this is a
+    /// thin alias over `FocusPolicy.clampDevicePoint` rather than a
+    /// duplicate implementation — both points come from the same
+    /// `PreviewUIView.devicePoint(for:)` conversion.
+    static func clampDevicePoint(_ point: CGPoint) -> CGPoint {
+        FocusPolicy.clampDevicePoint(point)
+    }
 }
 
 /// A `Sendable` snapshot of the device-derived control state, built on
@@ -119,6 +129,7 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
     var isFocusLocked: Bool
     var isFocusSupported: Bool
     var isExposureLocked: Bool
+    var isExposureSupported: Bool
 
     /// Pre-device defaults. A degenerate `1...1` zoom range and `0...0` bias
     /// range mean "nothing selectable yet", which is what the UI should show
@@ -132,7 +143,8 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
         isMultiLensDevice: false,
         isFocusLocked: false,
         isFocusSupported: false,
-        isExposureLocked: false
+        isExposureLocked: false,
+        isExposureSupported: false
     )
 
     /// Builds a snapshot from raw device readings. Pure, so the range-safety
@@ -153,7 +165,8 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
         isMultiLensDevice: Bool,
         isFocusLocked: Bool,
         isFocusSupported: Bool,
-        isExposureLocked: Bool
+        isExposureLocked: Bool,
+        isExposureSupported: Bool
     ) -> CameraControlSnapshot {
         let lowerDisplayed = ZoomPolicy.displayed(fromDeviceFactor: minZoomFactor, multiplier: displayMultiplier)
         let upperDisplayed = ZoomPolicy.displayed(fromDeviceFactor: maxZoomFactor, multiplier: displayMultiplier)
@@ -176,7 +189,8 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
             isMultiLensDevice: isMultiLensDevice,
             isFocusLocked: isFocusLocked,
             isFocusSupported: isFocusSupported,
-            isExposureLocked: isExposureLocked
+            isExposureLocked: isExposureLocked,
+            isExposureSupported: isExposureSupported
         )
     }
 
