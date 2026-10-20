@@ -20,20 +20,26 @@ struct CameraPreview: UIViewRepresentable {
         if let device = cameraManager.videoDevice {
             context.coordinator.attach(to: view, device: device)
         }
-        // Tap-to-focus (Phase 4, D5). The actual layer→device coordinate
-        // conversion happens inside PreviewUIView, which owns the layer —
-        // never computed here in SwiftUI.
+        // Tap-to-focus-and-expose (Phase 4 + Phase 5, D5). The actual
+        // layer→device coordinate conversion happens inside PreviewUIView,
+        // which owns the layer — never computed here in SwiftUI. A single
+        // tap drives both `CameraManager.focus(at:)` and
+        // `exposeAndMeter(at:)` at the same point (matching the stock
+        // Camera app's combined AF/AE point tap); the separate AF/MF and
+        // AE/locked toggle badges remain independently lockable afterward —
+        // only the *tap target point* is shared, not the lock state.
         let tapRecognizer = UITapGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleTap(_:))
         )
         view.addGestureRecognizer(tapRecognizer)
-        // VoiceOver equivalent for tap-to-focus: a direct-manipulation tap
-        // gesture is unreachable once VoiceOver's own touch exploration is
-        // running, so `PreviewUIView` exposes discrete focus points as
-        // accessibility custom actions instead (a11y review finding — the
-        // AF/MF toggle alone can't express "focus *here*").
-        view.onAccessibilityFocus = context.coordinator.focus(at:)
+        // VoiceOver equivalent for tap-to-focus-and-expose: a
+        // direct-manipulation tap gesture is unreachable once VoiceOver's
+        // own touch exploration is running, so `PreviewUIView` exposes
+        // discrete focus-and-expose points as accessibility custom actions
+        // instead (a11y review finding — the AF/MF toggle alone can't
+        // express "focus *here*").
+        view.onAccessibilityFocus = context.coordinator.focusAndExpose(at:)
         return view
     }
 
@@ -74,11 +80,12 @@ struct CameraPreview: UIViewRepresentable {
             super.init()
         }
 
-        /// Tap-to-focus (Phase 4, D5). Converts the tap's own view-local
-        /// point into AVFoundation device space via the tapped
-        /// `PreviewUIView` itself — the only thing that knows the preview
-        /// layer's actual letterboxed video rect — then forwards it to
-        /// `CameraManager.focus(at:)`. Shows a brief reticle at the tap's
+        /// Tap-to-focus-and-expose (Phase 4, D5; extended in Phase 5).
+        /// Converts the tap's own view-local point into AVFoundation device
+        /// space via the tapped `PreviewUIView` itself — the only thing
+        /// that knows the preview layer's actual letterboxed video rect —
+        /// then forwards it to both `CameraManager.focus(at:)` and
+        /// `exposeAndMeter(at:)`. Shows a brief reticle at the tap's
         /// *layer* point (screen space, not device space) for visual
         /// feedback; the reticle is purely decorative, so `isEnded` guards
         /// against firing twice for begin/end on the same tap.
@@ -90,16 +97,22 @@ struct CameraPreview: UIViewRepresentable {
                 Logger.orientation.debug("Tap-to-focus skipped: no previewLayer to convert the tap point yet.")
                 return
             }
-            focus(at: devicePoint)
+            focusAndExpose(at: devicePoint)
         }
 
         /// Shared by `handleTap` and `PreviewUIView.onAccessibilityFocus`
         /// (the VoiceOver custom-action equivalent, since a direct-manipulation
         /// tap gesture is unreachable while VoiceOver's own touch exploration
         /// is running — a11y review flagged the tap gesture alone as a real
-        /// capability loss, not just a presentation difference).
-        func focus(at devicePoint: CGPoint) {
+        /// capability loss, not just a presentation difference). Drives both
+        /// focus and exposure metering at the same point — matching how the
+        /// stock Camera app's AF/AE square behaves on tap — but the AF/MF
+        /// and AE/locked toggle badges remain independently lockable
+        /// afterward; only the tap *target point* is shared between the two,
+        /// never their lock state.
+        func focusAndExpose(at devicePoint: CGPoint) {
             cameraManager?.focus(at: devicePoint)
+            cameraManager?.exposeAndMeter(at: devicePoint)
         }
 
         func attach(to view: PreviewUIView, device: AVCaptureDevice) {
@@ -169,30 +182,34 @@ struct CameraPreview: UIViewRepresentable {
     class PreviewUIView: UIView {
         fileprivate var previewLayer: AVCaptureVideoPreviewLayer?
 
-        /// VoiceOver's equivalent of a tap-to-focus gesture (a11y review
-        /// finding — see `accessibilityCustomActions` below). Receives a
-        /// DEVICE-space point, same as `CameraManager.focus(at:)` expects;
-        /// set by `CameraPreview.makeUIView` to route into `Coordinator`.
+        /// VoiceOver's equivalent of a tap-to-focus-and-expose gesture
+        /// (a11y review finding — see `accessibilityCustomActions` below).
+        /// Receives a DEVICE-space point, same as `CameraManager.focus(at:)`/
+        /// `exposeAndMeter(at:)` expect; set by `CameraPreview.makeUIView`
+        /// to route into `Coordinator.focusAndExpose(at:)`, which drives
+        /// both.
         var onAccessibilityFocus: ((CGPoint) -> Void)?
 
-        /// Discrete, nameable focus targets exposed as VoiceOver custom
-        /// actions, since a direct-manipulation tap gesture is unreachable
-        /// once VoiceOver's own touch exploration is running — the AF/MF
-        /// toggle alone can only flip global auto/lock, not "focus *here*".
-        /// DEVICE space (0...1, matching `focusPointOfInterest`'s own
+        /// Discrete, nameable focus-and-expose targets exposed as VoiceOver
+        /// custom actions, since a direct-manipulation tap gesture is
+        /// unreachable once VoiceOver's own touch exploration is running —
+        /// the AF/MF and AE/locked toggles alone can only flip global
+        /// auto/lock, not "focus and expose *here*". DEVICE space (0...1,
+        /// matching `focusPointOfInterest`'s own
         /// convention), not layer/screen space.
         private static let focusAccessibilityTargets: [(name: String, devicePoint: CGPoint)] = [
-            ("Focus center", CGPoint(x: 0.5, y: 0.5)),
-            ("Focus upper left", CGPoint(x: 0.25, y: 0.25)),
-            ("Focus upper right", CGPoint(x: 0.75, y: 0.25)),
-            ("Focus lower left", CGPoint(x: 0.25, y: 0.75)),
-            ("Focus lower right", CGPoint(x: 0.75, y: 0.75)),
+            ("Focus and expose center", CGPoint(x: 0.5, y: 0.5)),
+            ("Focus and expose upper left", CGPoint(x: 0.25, y: 0.25)),
+            ("Focus and expose upper right", CGPoint(x: 0.75, y: 0.25)),
+            ("Focus and expose lower left", CGPoint(x: 0.25, y: 0.75)),
+            ("Focus and expose lower right", CGPoint(x: 0.75, y: 0.75)),
         ]
 
-        // Decorative tap-to-focus feedback (Phase 4). Added as a real
-        // subview (not a sublayer) so UIKit's normal z-ordering plus
-        // `bringSubviewToFront` keep it above the preview's video sublayer
-        // regardless of setup call order.
+        // Decorative tap-to-focus-and-expose feedback (Phase 4; shared with
+        // Phase 5's exposure metering). Added as a real subview (not a
+        // sublayer) so UIKit's normal z-ordering plus `bringSubviewToFront`
+        // keep it above the preview's video sublayer regardless of setup
+        // call order.
         private let focusReticleView: UIView = {
             let view = UIView(frame: CGRect(x: 0, y: 0, width: 72, height: 72))
             view.layer.borderColor = UIColor.systemYellow.cgColor
@@ -201,8 +218,9 @@ struct CameraPreview: UIViewRepresentable {
             view.backgroundColor = .clear
             view.isUserInteractionEnabled = false
             view.alpha = 0
-            // Decorative only — the real focus state is surfaced
-            // non-visually via `FocusControlView`'s accessibility value.
+            // Decorative only — the real focus/exposure state is surfaced
+            // non-visually via `FocusControlView`'s/`ExposureControlView`'s
+            // accessibility values.
             view.isAccessibilityElement = false
             return view
         }()
@@ -222,7 +240,7 @@ struct CameraPreview: UIViewRepresentable {
 
             isAccessibilityElement = true
             accessibilityLabel = "Camera preview"
-            accessibilityHint = "Offers actions to focus at a specific point in frame."
+            accessibilityHint = "Offers actions to focus and expose at a specific point in frame."
             // Live video, not a static image — `.updatesFrequently` is the
             // trait Apple documents for content that changes continuously.
             accessibilityTraits = .updatesFrequently
