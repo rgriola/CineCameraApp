@@ -243,6 +243,33 @@ struct ZoomIsPresetTests {
     }
 }
 
+struct FocusPolicyTests {
+
+    @Test("in-range points pass through unchanged")
+    func inRangePassesThrough() {
+        let point = CGPoint(x: 0.25, y: 0.75)
+        #expect(FocusPolicy.clampDevicePoint(point) == point)
+    }
+
+    @Test("out-of-range components clamp to the unit square")
+    func outOfRangeClamps() {
+        #expect(FocusPolicy.clampDevicePoint(CGPoint(x: -1, y: 2)) == CGPoint(x: 0, y: 1))
+        #expect(FocusPolicy.clampDevicePoint(CGPoint(x: 1.5, y: -0.5)) == CGPoint(x: 1, y: 0))
+    }
+
+    @Test("boundary values pass through unchanged")
+    func boundaryPassesThrough() {
+        #expect(FocusPolicy.clampDevicePoint(CGPoint(x: 0, y: 0)) == CGPoint(x: 0, y: 0))
+        #expect(FocusPolicy.clampDevicePoint(CGPoint(x: 1, y: 1)) == CGPoint(x: 1, y: 1))
+    }
+
+    @Test("non-finite components fall back to the center point")
+    func nonFiniteFallsBackToCenter() {
+        #expect(FocusPolicy.clampDevicePoint(CGPoint(x: .nan, y: 0.5)) == CGPoint(x: 0.5, y: 0.5))
+        #expect(FocusPolicy.clampDevicePoint(CGPoint(x: .infinity, y: -.infinity)) == CGPoint(x: 0.5, y: 0.5))
+    }
+}
+
 struct ExposurePolicyTests {
 
     @Test("clamps bias below, within, and above the device range")
@@ -360,6 +387,7 @@ struct CameraControlSnapshotTests {
             maxExposureBias: 8,
             isMultiLensDevice: true,
             isFocusLocked: false,
+            isFocusSupported: true,
             isExposureLocked: false
         )
     }
@@ -394,6 +422,7 @@ struct CameraControlSnapshotTests {
             maxExposureBias: 8,
             isMultiLensDevice: false,
             isFocusLocked: false,
+            isFocusSupported: true,
             isExposureLocked: false
         )
         #expect(snapshot.isMultiLensDevice == false)
@@ -415,6 +444,7 @@ struct CameraControlSnapshotTests {
             maxExposureBias: 2,
             isMultiLensDevice: true,
             isFocusLocked: false,
+            isFocusSupported: true,
             isExposureLocked: false
         )
         #expect(isClose(snapshot.zoomDisplayed, 2.0))
@@ -434,6 +464,7 @@ struct CameraControlSnapshotTests {
             maxExposureBias: -8,
             isMultiLensDevice: false,
             isFocusLocked: false,
+            isFocusSupported: true,
             isExposureLocked: false
         )
         #expect(snapshot.zoomRangeDisplayed.lowerBound == 10.0)
@@ -455,6 +486,7 @@ struct CameraControlSnapshotTests {
             maxExposureBias: 8,
             isMultiLensDevice: false,
             isFocusLocked: false,
+            isFocusSupported: true,
             isExposureLocked: false
         )
         #expect(snapshot.zoomRangeDisplayed.lowerBound == 1)
@@ -470,7 +502,7 @@ struct CameraControlSnapshotTests {
             zoomFactor: 1.0, minZoomFactor: 1.0, maxZoomFactor: 4.0,
             switchOverFactors: [], displayMultiplier: 1.0,
             exposureBias: 0, minExposureBias: -2, maxExposureBias: 2,
-            isMultiLensDevice: false, isFocusLocked: true, isExposureLocked: true
+            isMultiLensDevice: false, isFocusLocked: true, isFocusSupported: true, isExposureLocked: true
         )
         #expect(snapshot.isFocusLocked)
         #expect(snapshot.isExposureLocked)

@@ -117,6 +117,7 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
     var exposureBiasRange: ClosedRange<Float>
     var isMultiLensDevice: Bool
     var isFocusLocked: Bool
+    var isFocusSupported: Bool
     var isExposureLocked: Bool
 
     /// Pre-device defaults. A degenerate `1...1` zoom range and `0...0` bias
@@ -130,6 +131,7 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
         exposureBiasRange: 0...0,
         isMultiLensDevice: false,
         isFocusLocked: false,
+        isFocusSupported: false,
         isExposureLocked: false
     )
 
@@ -150,6 +152,7 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
         maxExposureBias: Float,
         isMultiLensDevice: Bool,
         isFocusLocked: Bool,
+        isFocusSupported: Bool,
         isExposureLocked: Bool
     ) -> CameraControlSnapshot {
         let lowerDisplayed = ZoomPolicy.displayed(fromDeviceFactor: minZoomFactor, multiplier: displayMultiplier)
@@ -172,6 +175,7 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
             exposureBiasRange: biasRange,
             isMultiLensDevice: isMultiLensDevice,
             isFocusLocked: isFocusLocked,
+            isFocusSupported: isFocusSupported,
             isExposureLocked: isExposureLocked
         )
     }
@@ -182,5 +186,31 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
         guard lower.isFinite, upper.isFinite else { return fallback...fallback }
         guard lower <= upper else { return lower...lower }
         return lower...upper
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FocusPolicy — pure tap-to-focus point math (Phase 4).
+// ---------------------------------------------------------------------------
+
+/// Pure helpers supporting tap-to-focus. The actual layer→device coordinate
+/// conversion (D5) can't live here — it requires the live
+/// `AVCaptureVideoPreviewLayer` and so stays in
+/// `CameraPreview.PreviewUIView.devicePoint(for:)` — but the result of that
+/// conversion is defensively re-validated here before it reaches
+/// `AVCaptureDevice`.
+nonisolated enum FocusPolicy {
+    /// Clamps a tap-to-focus point into the unit square `focusPointOfInterest`
+    /// documents: `(0,0)` top-left, `(1,1)` bottom-right. `captureDevicePointConverted(fromLayerPoint:)`
+    /// is documented to already return a point in this range for taps inside
+    /// the preview layer's bounds, but a non-finite value should never reach
+    /// `AVCaptureDevice` unchecked — falls back to the center point (0.5, 0.5).
+    static func clampDevicePoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: clampUnit(point.x), y: clampUnit(point.y))
+    }
+
+    private static func clampUnit(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return 0.5 }
+        return min(max(value, 0), 1)
     }
 }

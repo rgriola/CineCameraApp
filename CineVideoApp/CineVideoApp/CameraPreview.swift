@@ -20,6 +20,20 @@ struct CameraPreview: UIViewRepresentable {
         if let device = cameraManager.videoDevice {
             context.coordinator.attach(to: view, device: device)
         }
+        // Tap-to-focus (Phase 4, D5). The actual layer→device coordinate
+        // conversion happens inside PreviewUIView, which owns the layer —
+        // never computed here in SwiftUI.
+        let tapRecognizer = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTap(_:))
+        )
+        view.addGestureRecognizer(tapRecognizer)
+        // VoiceOver equivalent for tap-to-focus: a direct-manipulation tap
+        // gesture is unreachable once VoiceOver's own touch exploration is
+        // running, so `PreviewUIView` exposes discrete focus points as
+        // accessibility custom actions instead (a11y review finding — the
+        // AF/MF toggle alone can't express "focus *here*").
+        view.onAccessibilityFocus = context.coordinator.focus(at:)
         return view
     }
 
@@ -47,7 +61,7 @@ struct CameraPreview: UIViewRepresentable {
     // while recording, when CameraManager.isRecording freezes it in place.
     // -------------------------------------------------------------------
     @MainActor
-    final class Coordinator {
+    final class Coordinator: NSObject {
         private weak var cameraManager: CameraManager?
         private(set) var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
         private var observation: NSKeyValueObservation?
@@ -57,6 +71,35 @@ struct CameraPreview: UIViewRepresentable {
 
         init(cameraManager: CameraManager) {
             self.cameraManager = cameraManager
+            super.init()
+        }
+
+        /// Tap-to-focus (Phase 4, D5). Converts the tap's own view-local
+        /// point into AVFoundation device space via the tapped
+        /// `PreviewUIView` itself — the only thing that knows the preview
+        /// layer's actual letterboxed video rect — then forwards it to
+        /// `CameraManager.focus(at:)`. Shows a brief reticle at the tap's
+        /// *layer* point (screen space, not device space) for visual
+        /// feedback; the reticle is purely decorative, so `isEnded` guards
+        /// against firing twice for begin/end on the same tap.
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, let view = gesture.view as? PreviewUIView else { return }
+            let layerPoint = gesture.location(in: view)
+            view.showFocusReticle(at: layerPoint)
+            guard let devicePoint = view.devicePoint(for: layerPoint) else {
+                Logger.orientation.debug("Tap-to-focus skipped: no previewLayer to convert the tap point yet.")
+                return
+            }
+            focus(at: devicePoint)
+        }
+
+        /// Shared by `handleTap` and `PreviewUIView.onAccessibilityFocus`
+        /// (the VoiceOver custom-action equivalent, since a direct-manipulation
+        /// tap gesture is unreachable while VoiceOver's own touch exploration
+        /// is running — a11y review flagged the tap gesture alone as a real
+        /// capability loss, not just a presentation difference).
+        func focus(at devicePoint: CGPoint) {
+            cameraManager?.focus(at: devicePoint)
         }
 
         func attach(to view: PreviewUIView, device: AVCaptureDevice) {
@@ -126,6 +169,78 @@ struct CameraPreview: UIViewRepresentable {
     class PreviewUIView: UIView {
         fileprivate var previewLayer: AVCaptureVideoPreviewLayer?
 
+        /// VoiceOver's equivalent of a tap-to-focus gesture (a11y review
+        /// finding — see `accessibilityCustomActions` below). Receives a
+        /// DEVICE-space point, same as `CameraManager.focus(at:)` expects;
+        /// set by `CameraPreview.makeUIView` to route into `Coordinator`.
+        var onAccessibilityFocus: ((CGPoint) -> Void)?
+
+        /// Discrete, nameable focus targets exposed as VoiceOver custom
+        /// actions, since a direct-manipulation tap gesture is unreachable
+        /// once VoiceOver's own touch exploration is running — the AF/MF
+        /// toggle alone can only flip global auto/lock, not "focus *here*".
+        /// DEVICE space (0...1, matching `focusPointOfInterest`'s own
+        /// convention), not layer/screen space.
+        private static let focusAccessibilityTargets: [(name: String, devicePoint: CGPoint)] = [
+            ("Focus center", CGPoint(x: 0.5, y: 0.5)),
+            ("Focus upper left", CGPoint(x: 0.25, y: 0.25)),
+            ("Focus upper right", CGPoint(x: 0.75, y: 0.25)),
+            ("Focus lower left", CGPoint(x: 0.25, y: 0.75)),
+            ("Focus lower right", CGPoint(x: 0.75, y: 0.75)),
+        ]
+
+        // Decorative tap-to-focus feedback (Phase 4). Added as a real
+        // subview (not a sublayer) so UIKit's normal z-ordering plus
+        // `bringSubviewToFront` keep it above the preview's video sublayer
+        // regardless of setup call order.
+        private let focusReticleView: UIView = {
+            let view = UIView(frame: CGRect(x: 0, y: 0, width: 72, height: 72))
+            view.layer.borderColor = UIColor.systemYellow.cgColor
+            view.layer.borderWidth = 1.5
+            view.layer.cornerRadius = 8
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = false
+            view.alpha = 0
+            // Decorative only — the real focus state is surfaced
+            // non-visually via `FocusControlView`'s accessibility value.
+            view.isAccessibilityElement = false
+            return view
+        }()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            commonInit()
+        }
+
+        required init?(coder: NSCoder) {
+            super.init(coder: coder)
+            commonInit()
+        }
+
+        private func commonInit() {
+            addSubview(focusReticleView)
+
+            isAccessibilityElement = true
+            accessibilityLabel = "Camera preview"
+            accessibilityHint = "Offers actions to focus at a specific point in frame."
+            // Live video, not a static image — `.updatesFrequently` is the
+            // trait Apple documents for content that changes continuously.
+            accessibilityTraits = .updatesFrequently
+            accessibilityCustomActions = Self.focusAccessibilityTargets.map { target in
+                UIAccessibilityCustomAction(name: target.name) { [weak self] _ in
+                    guard let self else { return false }
+                    // Mirror the tap gesture's visual feedback for sighted
+                    // VoiceOver users too, via the inverse of
+                    // `devicePoint(for:)`.
+                    if let layerPoint = self.previewLayer?.layerPointConverted(fromCaptureDevicePoint: target.devicePoint) {
+                        self.showFocusReticle(at: layerPoint)
+                    }
+                    self.onAccessibilityFocus?(target.devicePoint)
+                    return true
+                }
+            }
+        }
+
         func setupPreviewLayer(session: AVCaptureSession) {
             let layer = AVCaptureVideoPreviewLayer(session: session)
             // `.resizeAspect`, not `.resizeAspectFill`: the capture format is
@@ -142,11 +257,45 @@ struct CameraPreview: UIViewRepresentable {
             layer.videoGravity = .resizeAspect
             self.layer.addSublayer(layer)
             previewLayer = layer
+            bringSubviewToFront(focusReticleView)
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
             previewLayer?.frame = bounds
+        }
+
+        /// Converts a tap's point in this view's own coordinate space into
+        /// AVFoundation's device-point space (D5). The preview is
+        /// `.resizeAspect`, so a naive `location.x / bounds.width`
+        /// normalization would ignore the letterbox bars and focus on the
+        /// wrong subject — `previewLayer` is the only thing that knows its
+        /// own actual visible video rect, so the conversion must happen here.
+        func devicePoint(for layerPoint: CGPoint) -> CGPoint? {
+            previewLayer?.captureDevicePointConverted(fromLayerPoint: layerPoint)
+        }
+
+        /// Brief, transient visual feedback at a tap-to-focus point —
+        /// appears, holds briefly, then fades. Purely decorative; durations
+        /// collapse to near-zero under Reduce Motion rather than being
+        /// skipped outright, since the reticle still needs to disappear
+        /// afterward either way.
+        func showFocusReticle(at layerPoint: CGPoint) {
+            focusReticleView.center = layerPoint
+            focusReticleView.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
+            focusReticleView.alpha = 0
+            let reduceMotion = UIAccessibility.isReduceMotionEnabled
+            UIView.animate(withDuration: reduceMotion ? 0 : 0.2, animations: {
+                self.focusReticleView.alpha = 1
+                self.focusReticleView.transform = .identity
+            }, completion: { _ in
+                UIView.animate(
+                    withDuration: reduceMotion ? 0 : 0.3,
+                    delay: 0.5,
+                    options: [],
+                    animations: { self.focusReticleView.alpha = 0 }
+                )
+            })
         }
     }
 }

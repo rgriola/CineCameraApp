@@ -53,6 +53,13 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // `videoZoomFactor` is documented as KVO-observable for exactly this.
     nonisolated(unsafe) var zoomObservation: NSKeyValueObservation?
 
+    // Tracks `focusMode` (Phase 4) so the published snapshot's
+    // `isFocusLocked` reflects the automatic `.autoFocus` → `.locked`
+    // transition a tap-to-focus settles into on its own, not just changes
+    // `CameraManager` makes explicitly — `focusMode` is documented
+    // KVO-observable for exactly this.
+    nonisolated(unsafe) var focusModeObservation: NSKeyValueObservation?
+
     // Set true for the duration of a recording. While locked, live rotation
     // updates are ignored — this is the safety net that freezes camera
     // preview, recording, and HDMI output orientation during capture.
@@ -443,6 +450,39 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Tap-to-focus: focuses once at `devicePoint` — DEVICE space, already
+    /// converted from a tap's layer point via
+    /// `CameraPreview.PreviewUIView.devicePoint(for:)` (D5). Never pass a
+    /// raw/normalized view coordinate here; the letterboxed `.resizeAspect`
+    /// preview makes naive `x / width` math focus on the wrong subject.
+    /// Sets a one-shot `.autoFocus` — the device itself then settles into
+    /// `.locked` on its own (documented `AVCaptureDevice` behavior), which
+    /// `observeFocusMode`'s KVO picks up; this method doesn't publish an
+    /// optimistic "locked" state itself. Allowed live during recording (D6)
+    /// — a cine operator racks focus mid-take.
+    func focus(at devicePoint: CGPoint) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performFocus(device: device, at: devicePoint)
+        }
+    }
+
+    /// AF/MF toggle: switches `focusMode` between `.continuousAutoFocus`
+    /// (`enabled == true`) and `.locked` (`enabled == false`), freezing focus
+    /// wherever the lens currently sits. Unlike `focus(at:)`, this never
+    /// moves the point of interest — it's the toggle half of the control,
+    /// not the tap-to-refocus half; the two stay independently usable per the
+    /// plan (unlike PromptCam, which combines focus and exposure lock into
+    /// one control). Allowed live during recording (D6).
+    func setAutoFocus(_ enabled: Bool) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else { return }
+            self.performSetAutoFocus(enabled, device: device)
+        }
+    }
+
     /// Escape hatch that lets other components (namely `ExternalDisplayController`,
     /// for adding/removing its audio-mirror output) safely mutate the capture
     /// session on the same serial queue `CameraManager` itself uses — never on
@@ -656,6 +696,7 @@ final class CameraManager: NSObject {
         // produce a redundant KVO-triggered publish — the explicit publish
         // just below already covers that first value.
         observeZoomFactor(cs: cs, device: videoDevice)
+        observeFocusMode(cs: cs, device: videoDevice)
 
         // Snapshotted here, on sessionQueue, after the format and zoom anchor
         // have settled — the available zoom range is format-dependent.
@@ -860,6 +901,62 @@ final class CameraManager: NSObject {
         }
     }
 
+    /// Tap-to-focus. `focusPointOfInterest` must be set *before* `focusMode`
+    /// for the new point to take effect — documented on `AVCaptureDevice`:
+    /// setting the point alone doesn't initiate a focus operation.
+    nonisolated private func performFocus(device: AVCaptureDevice, at devicePoint: CGPoint) {
+        guard device.isFocusPointOfInterestSupported, device.isFocusModeSupported(.autoFocus) else {
+            Logger.controls.notice("Tap-to-focus skipped: unsupported on this device.")
+            return
+        }
+        let clamped = FocusPolicy.clampDevicePoint(devicePoint)
+        do {
+            try device.lockForConfiguration()
+            device.focusPointOfInterest = clamped
+            device.focusMode = .autoFocus
+            device.unlockForConfiguration()
+            Logger.controls.info(
+                "Tap-to-focus at device point (\(clamped.x, privacy: .public), \(clamped.y, privacy: .public))."
+            )
+        } catch {
+            Logger.controls.error("Failed to lock device for tap-to-focus: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// AF/MF toggle. `enabled` selects `.continuousAutoFocus`; disabling it
+    /// selects `.locked`, freezing focus wherever the lens currently sits —
+    /// no point-of-interest change, unlike `performFocus`.
+    nonisolated private func performSetAutoFocus(_ enabled: Bool, device: AVCaptureDevice) {
+        let desired: AVCaptureDevice.FocusMode = enabled ? .continuousAutoFocus : .locked
+        guard device.isFocusModeSupported(desired) else {
+            Logger.controls.notice("Focus mode \(String(describing: desired), privacy: .public) unsupported on this device.")
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            device.focusMode = desired
+            device.unlockForConfiguration()
+            Logger.controls.info("Set focus mode to \(String(describing: desired), privacy: .public).")
+        } catch {
+            Logger.controls.error("Failed to lock device to set focus mode: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Key-value observes `focusMode` so the published snapshot's
+    /// `isFocusLocked` tracks reality — including the automatic
+    /// `.autoFocus` → `.locked` transition a tap-to-focus settles into on its
+    /// own, which `performFocus` never sets explicitly itself. Mirrors
+    /// `observeZoomFactor`'s pattern, including the deliberate hop back onto
+    /// `sessionQueue` inside the callback.
+    nonisolated private func observeFocusMode(cs: CameraSession, device: AVCaptureDevice) {
+        cs.focusModeObservation = device.observe(\.focusMode, options: [.new]) { [weak self] device, _ in
+            guard let self else { return }
+            self.sessionQueue.async {
+                self.publishControlSnapshot(for: device)
+            }
+        }
+    }
+
     /// Builds a fresh control snapshot and publishes it to the main actor.
     /// Shared by the zoom entry points, which don't also need to touch
     /// `activeFormat`/persistence — `setupSession`/`applyFormat` publish
@@ -885,6 +982,7 @@ final class CameraManager: NSObject {
             maxExposureBias: device.maxExposureTargetBias,
             isMultiLensDevice: device.isVirtualDevice,
             isFocusLocked: device.focusMode == .locked,
+            isFocusSupported: device.isFocusModeSupported(.continuousAutoFocus) && device.isFocusModeSupported(.locked),
             isExposureLocked: device.exposureMode == .locked
         )
     }
