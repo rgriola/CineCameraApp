@@ -41,25 +41,10 @@ struct ContentView: View {
         }
     }
 
-    // basic demo UI. This will change to its own view when we move to MVP
+    // Phase 6: preview + Format/Zoom/Focus/Exposure control chrome + record
+    // cluster, composed in `CameraScreen` (see camera-controls-plan.md).
     private var cameraView: some View {
-        ZStack(alignment: .bottom) {
-            CameraPreview(
-                session: cameraManager.session, 
-                cameraManager: cameraManager
-                )
-                .ignoresSafeArea()
-
-            Button {
-                cameraManager.toggleRecording()
-            } label: {
-                Image(systemName: cameraManager.isRecording ? "stop.circle.fill" : "record.circle.fill")
-                    .font(.system(size: 72))
-                    .foregroundStyle(cameraManager.isRecording ? .red : .white)
-            }
-            .disabled(!cameraManager.isSessionRunning)
-            .padding(.bottom, 32)
-        }
+        CameraScreen(cameraManager: cameraManager)
     }
 }
 
