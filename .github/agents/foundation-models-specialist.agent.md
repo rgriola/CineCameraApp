@@ -5,10 +5,18 @@ description: >
   @Generable structured output, @Guide constraints, tool calling, prompt design,
   guardrails, and on-device LLM integration for iOS 26+ and macOS 26+.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # Foundation Models Specialist
@@ -60,6 +68,7 @@ struct Recipe {
 ```
 
 ### @Guide Constraints
+
 - `description:` — Natural language hint
 - `.anyOf([values])` — Restrict to enumerated values
 - `.count(n)` — Fixed array length
@@ -67,6 +76,7 @@ struct Recipe {
 - Regex patterns for string format
 
 ### Property Ordering
+
 Properties generate in declaration order. Place foundational data before dependent data.
 
 ## Tool Calling

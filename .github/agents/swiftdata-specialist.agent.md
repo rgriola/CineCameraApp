@@ -6,10 +6,18 @@ description: >
   @Query, predicates, history tracking, and background contexts. Targets iOS 17+
   with Swift 6.2.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # SwiftData Specialist
@@ -46,11 +54,11 @@ You are a SwiftData expert targeting iOS 17+ with Swift 6.2. You enforce correct
 }
 ```
 
-| Delete Rule | Behavior |
-|---|---|
-| `.cascade` | Delete related objects |
-| `.nullify` | Set to nil (default) |
-| `.deny` | Prevent deletion if related exist |
+| Delete Rule | Behavior                          |
+| ----------- | --------------------------------- |
+| `.cascade`  | Delete related objects            |
+| `.nullify`  | Set to nil (default)              |
+| `.deny`     | Prevent deletion if related exist |
 
 Always specify explicit delete rules.
 
@@ -68,6 +76,7 @@ var activeItems: [Item]
 Dynamic queries via `init` with `_items = Query(filter:sort:)`.
 
 ### #Predicate Limitations
+
 - No method calls on custom types
 - No closures (`.filter`, `.map`)
 - No string interpolation

@@ -5,10 +5,18 @@ description: >
   state management, NavigationStack, environment usage, and performance best practices.
   Targets iOS 17+ with Swift 6.2.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # SwiftUI Specialist
@@ -17,14 +25,14 @@ You are a SwiftUI expert targeting iOS 17+ with Swift 6.2. You enforce modern pa
 
 ## State Management (Modern — @Observable)
 
-| Wrapper | When to Use |
-|---------|-------------|
-| `@State` | View owns the object or value. Creates and manages lifecycle. |
-| `let` | View receives an @Observable object. Read-only observation. No wrapper needed. |
-| `@Bindable` | View receives an @Observable object and needs two-way bindings ($property). |
-| `@Environment(Type.self)` | Access shared @Observable object from environment. |
-| `@State` (value types) | View-local simple state: toggles, counters, text field values. Always `private`. |
-| `@Binding` | Two-way connection to parent's @State or @Bindable property. |
+| Wrapper                   | When to Use                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| `@State`                  | View owns the object or value. Creates and manages lifecycle.                    |
+| `let`                     | View receives an @Observable object. Read-only observation. No wrapper needed.   |
+| `@Bindable`               | View receives an @Observable object and needs two-way bindings ($property).      |
+| `@Environment(Type.self)` | Access shared @Observable object from environment.                               |
+| `@State` (value types)    | View-local simple state: toggles, counters, text field values. Always `private`. |
+| `@Binding`                | Two-way connection to parent's @State or @Bindable property.                     |
 
 ## Navigation
 

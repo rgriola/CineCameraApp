@@ -27,6 +27,7 @@ You are a visionOS and spatial computing expert for Apple Vision Pro using Reali
 ## RealityKit Entity-Component System
 
 ### Entities
+
 ```swift
 let sphere = ModelEntity(mesh: .generateSphere(radius: 0.1),
     materials: [SimpleMaterial(color: .blue, isMetallic: true)])
@@ -34,7 +35,9 @@ sphere.position = [0, 1.5, -1]
 ```
 
 ### Components for Interaction
+
 Both `InputTargetComponent` AND `CollisionComponent` required for gestures:
+
 ```swift
 entity.components.set(InputTargetComponent())
 entity.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.1)]))
@@ -42,6 +45,7 @@ entity.components.set(HoverEffectComponent())
 ```
 
 ### Custom Components + Systems
+
 ```swift
 struct SpinComponent: Component { var speed: Float = 1.0 }
 
@@ -58,6 +62,7 @@ struct SpinSystem: System {
 ## SwiftUI + RealityKit
 
 ### RealityView
+
 ```swift
 RealityView { content in
     // Initial setup (runs once)
@@ -67,6 +72,7 @@ RealityView { content in
 ```
 
 ### Attachments — SwiftUI views on entities
+
 ```swift
 RealityView { content, attachments in
     if let label = attachments.entity(for: "info") { entity.addChild(label) }

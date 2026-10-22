@@ -5,10 +5,18 @@ description: >
   authentication, App Transport Security, privacy manifests, data protection,
   certificate pinning, and secure coding patterns for iOS and macOS.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # Swift Security Specialist
@@ -21,26 +29,27 @@ The Keychain is the ONLY correct place to store sensitive data. Never store pass
 
 ### kSecAttrAccessible Values
 
-| Value | When Available | Device-Only | Use For |
-|---|---|---|---|
-| `kSecAttrAccessibleWhenUnlocked` | Device unlocked | No | General credentials |
-| `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` | Device unlocked | Yes | Sensitive credentials |
-| `kSecAttrAccessibleAfterFirstUnlock` | After first unlock | No | Background-accessible tokens |
-| `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | After first unlock | Yes | Background tokens, no backup |
-| `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` | Passcode set + unlocked | Yes | Highest security |
+| Value                                              | When Available          | Device-Only | Use For                      |
+| -------------------------------------------------- | ----------------------- | ----------- | ---------------------------- |
+| `kSecAttrAccessibleWhenUnlocked`                   | Device unlocked         | No          | General credentials          |
+| `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`     | Device unlocked         | Yes         | Sensitive credentials        |
+| `kSecAttrAccessibleAfterFirstUnlock`               | After first unlock      | No          | Background-accessible tokens |
+| `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | After first unlock      | Yes         | Background tokens, no backup |
+| `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`  | Passcode set + unlocked | Yes         | Highest security             |
 
 **Rules:**
+
 - Use `ThisDeviceOnly` variants for sensitive data (prevents backup/restore to other devices)
 - Use `AfterFirstUnlock` for tokens needed by background operations
 - NEVER use `kSecAttrAccessibleAlways` (deprecated and insecure)
 
 ## Data Protection
 
-| Class | When Available | Use For |
-|---|---|---|
-| `.complete` | Only when unlocked | Sensitive user data |
-| `.completeUnlessOpen` | Open handles survive lock | Active downloads, recordings |
-| `.completeUntilFirstUserAuthentication` | After first unlock (default) | Most app data |
+| Class                                   | When Available               | Use For                      |
+| --------------------------------------- | ---------------------------- | ---------------------------- |
+| `.complete`                             | Only when unlocked           | Sensitive user data          |
+| `.completeUnlessOpen`                   | Open handles survive lock    | Active downloads, recordings |
+| `.completeUntilFirstUserAuthentication` | After first unlock (default) | Most app data                |
 
 Use `.complete` for any file containing user-sensitive data.
 
@@ -109,24 +118,29 @@ Required if you use: UserDefaults, file timestamps, system boot time, disk space
 ## Review Checklist
 
 ### Storage
+
 - [ ] Secrets stored in Keychain, not UserDefaults or files
 - [ ] No hardcoded API keys, tokens, or credentials in source code
 - [ ] Correct `kSecAttrAccessible` value for the use case
 
 ### Encryption
+
 - [ ] Using CryptoKit, not CommonCrypto
 - [ ] AES-GCM or ChaChaPoly for symmetric encryption
 - [ ] Keys stored in Keychain or Secure Enclave
 
 ### Authentication
+
 - [ ] Biometric auth with proper fallback to passcode
 - [ ] `NSFaceIDUsageDescription` in Info.plist
 
 ### Networking
+
 - [ ] HTTPS enforced (ATS not disabled)
 - [ ] Certificate pinning for sensitive APIs
 
 ### Privacy
+
 - [ ] PrivacyInfo.xcprivacy present and complete
 - [ ] All required-reason API usage declared
 - [ ] Third-party SDKs have their own privacy manifests

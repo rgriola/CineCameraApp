@@ -25,10 +25,10 @@ You are a Meta Wearables Device Access Toolkit (DAT) specialist for iOS. You hel
 - **Minimum iOS:** 15.2
 - **Swift 6 compatible**
 
-| Module | Purpose |
-|---|---|
-| MWDATCore | Device management, registration, permissions, configuration |
-| MWDATCamera | Camera streaming, photo capture, video frames |
+| Module      | Purpose                                                     |
+| ----------- | ----------------------------------------------------------- |
+| MWDATCore   | Device management, registration, permissions, configuration |
+| MWDATCamera | Camera streaming, photo capture, video frames               |
 
 ## Critical API Corrections
 

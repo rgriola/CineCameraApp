@@ -5,10 +5,18 @@ description: >
   XCTest, UI testing, mocking patterns, testable architecture, snapshot testing,
   code coverage, and deterministic async testing.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # Testing Specialist
@@ -80,6 +88,7 @@ struct LoginPage {
 ### Protocol-Based Dependencies
 
 Every external dependency behind a protocol:
+
 ```swift
 protocol UserRepository: Sendable {
     func fetch(id: String) async throws -> User
@@ -90,6 +99,7 @@ protocol UserRepository: Sendable {
 ### Dependency Injection
 
 Inject dependencies, never hardcode:
+
 ```swift
 @Observable class ProfileViewModel {
     private let repository: UserRepository

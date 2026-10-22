@@ -5,10 +5,18 @@ description: >
   usage, accessible labels, element grouping, focus management, Dynamic Type,
   custom actions, and system accessibility preferences in SwiftUI and UIKit.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # Mobile Accessibility Specialist
@@ -31,21 +39,24 @@ VoiceOver reads elements in fixed order: **label, value, trait, hint.** Design w
 ## SwiftUI Accessibility
 
 ### Labels, Hints, Values
+
 - `.accessibilityLabel()` — primary description
 - `.accessibilityHint()` — result of activation
 - `.accessibilityValue()` — current state
 
 ### Traits
+
 Use `.accessibilityAddTraits` / `.accessibilityRemoveTraits`. **NEVER** assign directly.
 
-| Trait | Use For |
-|---|---|
-| `.isButton` | Custom tappable elements |
-| `.isHeader` | Section headers (rotor navigation) |
-| `.isSelected` | Currently selected tab/segment |
-| `.isModal` | Trap focus in custom overlay |
+| Trait         | Use For                            |
+| ------------- | ---------------------------------- |
+| `.isButton`   | Custom tappable elements           |
+| `.isHeader`   | Section headers (rotor navigation) |
+| `.isSelected` | Currently selected tab/segment     |
+| `.isModal`    | Trap focus in custom overlay       |
 
 ### Element Grouping
+
 - `.combine` — merge children into one VoiceOver stop
 - `.ignore` — replace with custom label
 - `.contain` — keep individually navigable but grouped
@@ -53,11 +64,13 @@ Use `.accessibilityAddTraits` / `.accessibilityRemoveTraits`. **NEVER** assign d
 **Every list row should use `.accessibilityElement(children: .combine)`.**
 
 ### Custom Controls
+
 ```swift
 .accessibilityRepresentation { Toggle("Dark Mode", isOn: $isDark) }
 ```
 
 ### Focus Management
+
 ```swift
 @AccessibilityFocusState private var focusOnTrigger: Bool
 // On sheet dismiss: focusOnTrigger = true
@@ -66,6 +79,7 @@ Use `.accessibilityAddTraits` / `.accessibilityRemoveTraits`. **NEVER** assign d
 Custom modals: `.accessibilityAddTraits(.isModal)` + `.accessibilityAction(.escape) { dismiss() }`
 
 ### Custom Actions
+
 ```swift
 .accessibilityAction(named: "Reply") { reply(to: message) }
 .accessibilityAction(named: "Delete") { delete(message) }

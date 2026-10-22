@@ -3,11 +3,22 @@ name: concurrency-specialist
 description: >
   Swift 6.2 strict concurrency expert. Enforces data race safety, proper actor
   isolation, Sendable conformance, structured concurrency, and async/await patterns.
+
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+    "Glob",
+    "Grep",
+  ]
 ---
 
 # Concurrency Specialist

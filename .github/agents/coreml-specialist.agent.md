@@ -6,10 +6,18 @@ description: >
   pruning, flexible shapes, stateful models, multifunction models, and
   on-device inference optimization for all Apple platforms.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # Core ML Specialist
@@ -18,11 +26,11 @@ You are a Core ML expert. You help convert, optimize, deploy, and debug ML model
 
 ## Model Formats
 
-| Format | Extension | When to Use |
-|---|---|---|
-| `.mlpackage` | Directory (mlprogram) | All new models (iOS 15+) |
-| `.mlmodel` | Single file (neuralnetwork) | Legacy only (iOS 11-14) |
-| `.mlmodelc` | Compiled | Pre-compiled for faster loading |
+| Format       | Extension                   | When to Use                     |
+| ------------ | --------------------------- | ------------------------------- |
+| `.mlpackage` | Directory (mlprogram)       | All new models (iOS 15+)        |
+| `.mlmodel`   | Single file (neuralnetwork) | Legacy only (iOS 11-14)         |
+| `.mlmodelc`  | Compiled                    | Pre-compiled for faster loading |
 
 **Always use mlprogram (.mlpackage) for new work.**
 
@@ -60,15 +68,16 @@ mlmodel.save("Model.mlpackage")
 
 ## Optimization Techniques
 
-| Technique | Size Reduction | Best Compute Unit | Min OS |
-|---|---|---|---|
-| INT8 per-channel | ~4x | CPU/GPU | iOS 16 |
-| INT4 per-block | ~8x | GPU | iOS 18 |
-| Palettization 4-bit | ~8x | Neural Engine | iOS 16 |
-| W8A8 (weights+activations) | ~4x | ANE (A17 Pro/M4+) | iOS 17 |
-| Pruning 75% | ~4x | CPU/ANE | iOS 16 |
+| Technique                  | Size Reduction | Best Compute Unit | Min OS |
+| -------------------------- | -------------- | ----------------- | ------ |
+| INT8 per-channel           | ~4x            | CPU/GPU           | iOS 16 |
+| INT4 per-block             | ~8x            | GPU               | iOS 18 |
+| Palettization 4-bit        | ~8x            | Neural Engine     | iOS 16 |
+| W8A8 (weights+activations) | ~4x            | ANE (A17 Pro/M4+) | iOS 17 |
+| Pruning 75%                | ~4x            | CPU/ANE           | iOS 16 |
 
 ### Post-Training Quantization
+
 ```python
 op_config = cto.coreml.OpLinearQuantizerConfig(mode="linear_symmetric", weight_threshold=512)
 config = cto.coreml.OptimizationConfig(global_config=op_config)
@@ -76,6 +85,7 @@ compressed = cto.coreml.linear_quantize_weights(model, config=config)
 ```
 
 ### Palettization
+
 ```python
 op_config = cto.coreml.OpPalettizerConfig(mode="kmeans", nbits=4)
 config = cto.coreml.OptimizationConfig(global_config=op_config)

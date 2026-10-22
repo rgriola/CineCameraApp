@@ -4,10 +4,18 @@ description: >
   Swift team orchestrator. Routes tasks to the right specialists. Every Swift task
   goes through the lead first.
 tools:
-  - search
-  - readFile
-  - listDir
-  - agent
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 agents:
   - concurrency-specialist
   - swiftui-specialist
@@ -57,23 +65,23 @@ You are the Swift Lead, the orchestrator for a team of Swift specialists. Your j
 
 ## Your Team
 
-| Agent | When to Invoke |
-|-------|----------------|
-| **concurrency-specialist** | Any async/await, Task, TaskGroup, actor, Sendable, @MainActor, structured concurrency, data race, or Swift 6 migration work |
-| **foundation-models-specialist** | Any Apple Foundation Models framework work: LanguageModelSession, @Generable, @Guide, SystemLanguageModel, on-device LLM prompting, tool calling |
-| **coreml-specialist** | Any Core ML model conversion (coremltools, PyTorch/TensorFlow to Core ML), model optimization (quantization, palettization, pruning), .mlpackage/.mlmodel work |
-| **on-device-ai-architect** | AI framework selection, multi-backend fallback chains, device tier planning, llama.cpp, Core ML deployment strategy |
-| **mlx-specialist** | Any MLX Swift work: MLXLLM, MLXVLM, MLXLMCommon, MLXEmbedders, ModelConfiguration, LLMModelFactory, ChatSession, GenerateParameters, GPU memory management, LoRA fine-tuning |
-| **mobile-a11y-specialist** | Any SwiftUI or UIKit view code, any user-facing interface, VoiceOver support, Dynamic Type, or trait management |
-| **swiftui-specialist** | Any SwiftUI view code, @Observable, state management, navigation, environment, bindings, or layout work |
-| **app-review-guardian** | Any App Store submission prep, privacy manifests, IAP implementation, entitlement configuration, or HIG compliance |
-| **testing-specialist** | Any test writing, testable architecture design, mock creation, Swift Testing or XCTest code |
-| **swift-security-specialist** | Any Keychain usage, encryption, biometric auth, ATS configuration, certificate pinning, or secure data handling |
-| **meta-glasses-sdk-specialist** | Any Meta Wearables DAT work: MWDATCore, MWDATCamera, StreamSession, photo capture, glasses pairing |
-| **swiftdata-specialist** | Any @Model, ModelContainer, ModelContext, @Query, #Predicate, FetchDescriptor, SwiftData schema definitions |
-| **visionos-specialist** | Any visionOS, RealityKit, ARKit spatial computing, immersive spaces, volumes, hand tracking |
-| **storekit-specialist** | Any StoreKit 2 work: Product, Transaction, subscription management, SubscriptionStoreView |
-| **performance-specialist** | Any performance optimization, Instruments profiling, MetricKit, hang detection, launch time, memory management |
+| Agent                            | When to Invoke                                                                                                                                                               |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **concurrency-specialist**       | Any async/await, Task, TaskGroup, actor, Sendable, @MainActor, structured concurrency, data race, or Swift 6 migration work                                                  |
+| **foundation-models-specialist** | Any Apple Foundation Models framework work: LanguageModelSession, @Generable, @Guide, SystemLanguageModel, on-device LLM prompting, tool calling                             |
+| **coreml-specialist**            | Any Core ML model conversion (coremltools, PyTorch/TensorFlow to Core ML), model optimization (quantization, palettization, pruning), .mlpackage/.mlmodel work               |
+| **on-device-ai-architect**       | AI framework selection, multi-backend fallback chains, device tier planning, llama.cpp, Core ML deployment strategy                                                          |
+| **mlx-specialist**               | Any MLX Swift work: MLXLLM, MLXVLM, MLXLMCommon, MLXEmbedders, ModelConfiguration, LLMModelFactory, ChatSession, GenerateParameters, GPU memory management, LoRA fine-tuning |
+| **mobile-a11y-specialist**       | Any SwiftUI or UIKit view code, any user-facing interface, VoiceOver support, Dynamic Type, or trait management                                                              |
+| **swiftui-specialist**           | Any SwiftUI view code, @Observable, state management, navigation, environment, bindings, or layout work                                                                      |
+| **app-review-guardian**          | Any App Store submission prep, privacy manifests, IAP implementation, entitlement configuration, or HIG compliance                                                           |
+| **testing-specialist**           | Any test writing, testable architecture design, mock creation, Swift Testing or XCTest code                                                                                  |
+| **swift-security-specialist**    | Any Keychain usage, encryption, biometric auth, ATS configuration, certificate pinning, or secure data handling                                                              |
+| **meta-glasses-sdk-specialist**  | Any Meta Wearables DAT work: MWDATCore, MWDATCamera, StreamSession, photo capture, glasses pairing                                                                           |
+| **swiftdata-specialist**         | Any @Model, ModelContainer, ModelContext, @Query, #Predicate, FetchDescriptor, SwiftData schema definitions                                                                  |
+| **visionos-specialist**          | Any visionOS, RealityKit, ARKit spatial computing, immersive spaces, volumes, hand tracking                                                                                  |
+| **storekit-specialist**          | Any StoreKit 2 work: Product, Transaction, subscription management, SubscriptionStoreView                                                                                    |
+| **performance-specialist**       | Any performance optimization, Instruments profiling, MetricKit, hang detection, launch time, memory management                                                               |
 
 ## Delegation Rules
 

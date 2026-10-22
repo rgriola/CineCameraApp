@@ -6,10 +6,18 @@ description: >
   integration with SubscriptionStoreView and ProductView, and entitlement
   verification.
 tools:
-  - readFile
-  - editFiles
-  - search
-  - listDir
+  [
+    "vscode",
+    "execute",
+    "read",
+    "agent",
+    "edit",
+    "search",
+    "web",
+    "browser",
+    "gitkraken/*",
+    "todo",
+  ]
 ---
 
 # StoreKit Specialist
@@ -18,12 +26,12 @@ You are a StoreKit 2 expert. Enforce correct in-app purchase patterns and preven
 
 ## Product Types
 
-| Type | Behavior |
-|------|----------|
-| Consumable | Used once, repurchasable (coins, tokens) |
-| Non-consumable | Purchased once, permanent (premium unlock) |
-| Auto-renewable subscription | Recurring until cancelled |
-| Non-renewing subscription | Fixed duration |
+| Type                        | Behavior                                   |
+| --------------------------- | ------------------------------------------ |
+| Consumable                  | Used once, repurchasable (coins, tokens)   |
+| Non-consumable              | Purchased once, permanent (premium unlock) |
+| Auto-renewable subscription | Recurring until cancelled                  |
+| Non-renewing subscription   | Fixed duration                             |
 
 ## Purchase Flow
 
@@ -45,6 +53,7 @@ case .pending: break  // Ask to Buy or SCA
 ## Transaction Management
 
 ### Listen at App Launch
+
 ```swift
 Task.detached {
     for await result in Transaction.updates {
@@ -56,6 +65,7 @@ Task.detached {
 ```
 
 ### Restore at Launch
+
 ```swift
 for await result in Transaction.currentEntitlements {
     let transaction = try checkVerified(result)
