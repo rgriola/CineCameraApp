@@ -67,7 +67,7 @@ struct ControlPanel<Content: View>: View {
                 Button {
                     onDismiss()
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemName: CameraSymbols.close)
                         .font(.system(size: closeIconSize))
                         .foregroundStyle(Theme.primaryText)
                         .frame(minWidth: 44, minHeight: 44)

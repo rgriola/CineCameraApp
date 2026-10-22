@@ -2,12 +2,12 @@
 
 A SwiftUI + AVFoundation iOS camera app that records clean Cine-HD video (1920×1080, 30p, H.265/HEVC) with synchronized audio, saves recordings to the Photo Library, and mirrors a **clean** (UI-free) video + audio feed to an external monitor over a USB‑C/Lightning → HDMI adapter.
 
-> Built as a single-purpose "cine camera" tool — no UIKit view controllers, no `ObservableObject`. The on-screen chrome (`CameraScreen`, `camera-controls-plan.md` Phase 6) stays deliberately minimal: Format/Zoom/Focus/Exposure controls dock in the live preview's own letterbox/pillarbox bars so they never cover the image, never shrink it, and never add a non-camera screen to navigate. The HDMI-out behavior intentionally mirrors dedicated HDMI-monitoring camera apps (e.g. Blackmagic Camera): the external feed is always a stable, fixed-landscape clean image, independent of how the phone is held or what chrome is on screen.
+> Built as a single-purpose "cine camera" tool with SwiftUI camera controls and `@Observable` state. The landscape interface uses translucent phone-only overlays over the full, uncropped aspect-fit preview; portrait retains the existing dock layout pending its separate redesign. The HDMI feed stays clean, fixed-landscape, and independent of phone controls.
 
 ## Key Features (Implemented)
 
 - **Cine-HD recording** — video locked to 1920×1080 @ 30 fps, H.265/HEVC (falls back to H.264 only if a device genuinely can't encode HEVC), recorded with synchronized camera-mic audio via `AVCaptureMovieFileOutput`.
-- **Single-button UI** — one record/stop button positioned like the native iOS Camera app; no other on-screen chrome once permissions are granted.
+- **Landscape camera chrome** — Settings, Photos-unavailable, combined focus/exposure Lock, Zoom, Focus, large Record/Stop, a confirmed-start monotonic REC timer, and direct HD/4K and 24p/30p cycling with EV adjustment. Zoom uses device-supported magnifications capped at 8x (also enforced by the service in portrait). ISO, shutter, audio-source/meter, and Photos browsing affordances clearly indicate unavailable functionality. No decorative animations in the landscape chrome. See [landscape UI plan](landscape-ui-plan.md); portrait adaptation awaits landscape device approval.
 - **Permission onboarding gate** — sequential camera → microphone → Photo Library (add-only) permission cascade on first launch, with a status checklist and an "Open Settings" fallback button if anything is denied/restricted.
 - **Save to Photo Library** — finished recordings are saved via `PHAssetCreationRequest` (add-only scope), with the temp file cleaned up afterward and save errors surfaced as an in-app alert.
 - **Live rotation-following preview & recording** — an `AVCaptureDevice.RotationCoordinator` drives both the on-device preview layer and the movie output's connection as the device is turned, using the non-deprecated `videoRotationAngle` API.
@@ -18,7 +18,8 @@ A SwiftUI + AVFoundation iOS camera app that records clean Cine-HD video (1920×
 - **Dependency-injected permission cascade** — `CameraManager`'s camera/mic/Photos permission sequencing runs against an injectable `PermissionsService` protocol (`SystemPermissionsService` in production), making the cascade's ordering/short-circuit logic unit-testable without real hardware or prompts.
 - **Extracted pure capture policy** — codec selection, format selection/fallback across HD and 4K, zoom/exposure math, and recording-URL generation are pulled out into small, hardware-independent, unit-tested value types (`CapturePolicy.swift`, `CineFormat.swift`, `ControlPolicy.swift`) separate from the AVFoundation orchestration code.
 - **Multi-lens capture device with a stable 1× starting zoom** — the capture device is the richest available back camera (`.builtInTripleCamera` → dual-wide → dual → wide-angle fallback), required for zoom across focal lengths. On a virtual multi-lens device `videoZoomFactor == 1.0` is the ultra-wide lens ("0.5×"); the app explicitly anchors to the 1× equivalent on launch and after every format change, so framing never silently widens.
-- **User-selectable recording format (backend)** — `CameraManager.setFormat(_:)` switches between HD (1920×1080) and 4K (3840×2160) at 24p or 30p, falling back in a defined order (same resolution's sustainable rate, then HD, then HD's sustainable rate) and publishing back what was *actually* applied rather than assuming the request succeeded. Hard-blocked while recording. The operator's zoom level is preserved across a format change (assigning a new `activeFormat` resets `videoZoomFactor` to 1.0 — the app explicitly restores it). The last successful format persists across launches via `@AppStorage`. A standalone SwiftUI control (`FormatControlsView`) exists but isn't yet wired into the main camera screen.
+- **User-selectable recording format** — `CameraManager.setFormat(_:)` switches between HD (1920×1080) and 4K (3840×2160) at 24p or 30p, with hardware fallback and actual applied-format feedback. Changes are blocked during startup, recording, and stopping; successful formats persist via `@AppStorage`. Landscape has direct cycling buttons and Settings pickers; portrait uses the existing format panel.
+- **Combined focus/exposure lock** — landscape Lock requests both device modes together and only shows fully locked after readback. Unlock restores continuous AF/AE. Explicit combined lock blocks touch and VoiceOver point requests, while ordinary one-shot focus/metering remains repeatable. Independent Focus/AE controls remain synchronized; zoom and EV remain available while locked.
 
 ## Architecture & Tech Stack
 
@@ -35,6 +36,62 @@ A SwiftUI + AVFoundation iOS camera app that records clean Cine-HD video (1920×
   - Delegate callbacks → UI: AVFoundation delegate callbacks (recording start/finish, save errors) hop back to the main actor via `DispatchQueue.main.async` before touching `@Observable` state.
   - The video-frame sample-buffer delegate runs on its **own** dedicated serial queue (`videoDataOutputQueue`), deliberately separate from `sessionQueue`, because sharing a queue between per-frame delivery (~30/sec) and session configuration/rotation work caused frame drops in testing.
 - iOS deployment target: **18.0+**. Built with Xcode 26.6 / iOS 26.5 SDK at the time of writing.
+
+### Shared accessibility metadata
+
+Use `accessibilityInfo(label:value:hint:)` from
+[`AccessibilityInfo.swift`](CineVideoApp/CineVideoApp/AccessibilityInfo.swift)
+for repeated camera-control metadata:
+
+```swift
+.accessibilityInfo(
+    label: Text("Exposure bias"),
+    value: Text(accessibleEVReadoutText),
+    hint: Text("Opens exposure adjustment and Reset.")
+)
+.accessibilityFocused($focusedTrigger, equals: .exposure)
+```
+
+The label is required; value and hint are optional. Omitted fields leave existing
+metadata intact. Pass `Text` to retain localized literals and interpolations.
+Keep focus bindings, grouping, traits, disabled states, and accessibility actions
+at the control so the helper does not replace native semantics. Single-field
+annotations can continue using the standard SwiftUI modifiers.
+
+### Fixed camera controls
+
+Live camera controls and inline Zoom/Exposure adjustments do not scroll.
+Narrow or large-text layouts use compact, accessible icon controls.
+The portrait dock puts a continuous horizontal zoom slider above a fixed
+Record row; landscape uses the inline vertical zoom slider. Zoom preset
+buttons and menus have been removed. Slider drags adjust values only.
+The Settings `Form` retains native settings scrolling. ISO/shutter unavailable
+affordances remain there when the compact bottom strip omits them.
+
+The landscape rail is ordered Photos (unavailable), Settings, Zoom, Focus.
+Settings opens from the rail, not the preview. The combined Lock button is
+temporarily hidden without removing the underlying camera capability.
+Rail positioning uses the fitted preview's right-hand black margin, centered
+with at least 6 points of edge clearance. If the margin is too narrow, it
+falls back to the safe trailing edge without shrinking buttons or cropping
+the preview. The zoom scale follows the rail; no device-specific offsets
+are needed.
+
+In landscape, Zoom toggles an inline vertical slider, hidden initially,
+in the former preset-scale area. Drag upward to zoom in; the upright readout
+shows the current magnification. The native adjustable control respects the
+device-supported range and 8x cap, remains available while recording, and is
+disabled until zoom is available. Portrait zoom controls are unchanged.
+
+The landscape EV button similarly toggles inline exposure controls, hidden
+initially, directly above the quick strip. The EV slider stays horizontal,
+with the current signed EV readout. Reset and AE/lock entries are currently hidden.
+Settings and portrait exposure controls are unchanged.
+
+Tap-to-focus/expose accepts touches only inside the preview layer's displayed
+video rectangle. Black letterbox/pillarbox margins and an unready preview do
+not issue camera commands or display a focus reticle. VoiceOver's in-frame
+point actions and the existing combined-lock policy remain unchanged.
 
 ## Project Structure
 
@@ -55,11 +112,13 @@ CineCameraApp/
     │   │                                  #   permission cascade orchestration, HDMI frame-handler registration
     │   ├── CameraPreview.swift            # UIViewRepresentable on-device preview layer + its own RotationCoordinator
     │   ├── CameraScreen.swift             # Composes the live preview with Format/Zoom/Focus/Exposure chrome (camera-controls-plan.md Phase 6) — see "Key Features"
+    │   ├── LandscapeCameraChrome.swift    # Landscape rail, quick controls, settings/panels, recording timer
+    │   ├── CameraSymbols.swift            # Shared camera-chrome SF Symbol names
     │   ├── CameraLayout.swift             # Pure geometry: where the letterboxed/pillarboxed preview renders vs. its container, so chrome never covers the live image (D7)
     │   ├── Theme.swift                    # Camera-chrome design tokens (colors, radii, spacing, panel spring animation)
     │   ├── ControlPanel.swift             # Reusable popup-panel chrome (header/divider/content/scrim) used by the Format and Exposure-bias popups
     │   ├── FormatControlsView.swift       # Record-format UI: HD/4K toggle + 24p/30p segmented control; wired into CameraScreen's Format popup
-    │   ├── ZoomControlView.swift           # Zoom UI: lens-preset row + continuous slider, live-updating via KVO; wired into CameraScreen's persistent dock
+    │   ├── ZoomControlView.swift           # Continuous zoom slider and readout, live-updating via KVO; wired into CameraScreen's persistent dock
     │   ├── FocusControlView.swift          # Focus UI: AF/MF toggle badge; wired into CameraScreen's persistent dock. Tap-to-focus itself is already live in CameraPreview.swift.
     │   ├── ExposureControlView.swift       # Exposure UI: EV-bias slider + Reset + AE/locked toggle badge; the full view is wired into CameraScreen's Exposure-bias popup, with a compact AE/LOCK badge docked persistently
     │   ├── CapturePolicy.swift            # Pure, unit-tested policy: CodecSelector, CaptureFormatDescriptor/Selector, FormatResolutionPolicy, VideoDeviceSelector, RecordingURL
@@ -126,7 +185,7 @@ Note: the DI refactor (`di-refactor.md`) deliberately stopped after Phase 1 (pur
 
 - **HDMI clean feed — resolved, with a caveat.** The app previously had a bug where the external display showed the entire app UI (the OS's default device mirror) instead of a clean camera image (see `camera-clean-feed.md`). This has been **fixed**: `ExternalDisplayController` now presents the external window immediately on scene-connect, decoupled from capture-session readiness. A residual, benign startup frame-drop transient (`FrameWasLate`, self-heals to 30fps) remains but is not a recurrence of the original bug.
 - **No dynamic orientation on HDMI output.** The HDMI mirror's rotation angle is set once, to a fixed landscape value, and never updates — the team explicitly abandoned trying to make the external feed follow device rotation live, judging it too difficult to engineer at this stage (matches how Blackmagic Camera's HDMI output behaves).
-- **HDMI output is always 1080p — by design, not a bug.** The external monitor feed is fixed at 1920×1080 and will **remain 1080p even once 4K recording is added** (see `camera-controls-plan.md`, decision D4). It is deliberately decoupled from the selected record format and is not user-configurable. Together with the fixed-landscape rotation above, this defines the HDMI feed as a *stable monitoring signal* independent of what the recording is doing — the same tradeoff Blackmagic Camera makes, and a deliberate protection for a frame-delivery path that already shows drop pressure (`FrameWasLate`/`OutOfBuffers`) at 1080p. Please do not "fix" this to track the record resolution.
+- **HDMI output is always 1080p — by design, not a bug.** The external monitor feed is fixed at 1920×1080 and will **remain 1080p even once 4K recording is added** (see `camera-controls-plan.md`, decision D4). It is deliberately decoupled from the selected record format and is not user-configurable. Together with the fixed-landscape rotation above, this defines the HDMI feed as a _stable monitoring signal_ independent of what the recording is doing — the same tradeoff Blackmagic Camera makes, and a deliberate protection for a frame-delivery path that already shows drop pressure (`FrameWasLate`/`OutOfBuffers`) at 1080p. Please do not "fix" this to track the record resolution.
 - **Orientation support is Portrait + Landscape Right only**, locked for the duration of any recording (preview, recording, and the app's own UIKit orientation mask all freeze together, then catch back up when recording stops). Note: `mvp-plan.md`'s original plan called for Landscape **Left**, but the shipped `Info.plist`/`AppDelegate` configuration actually locks to Landscape **Right**.
   - The phone lock reads the camera preview's own window scene before starting recording, never the first connected scene (which may be HDMI). The lock covers startup, recording, and stopping; startup rejection or recording completion releases it. Repeated start/stop taps are blocked during transitions. A missing/inactive camera scene or unsupported orientation reports an error instead of defaulting to portrait.
   - External-display orientation is independent of the phone lock and remains landscape, including when the phone records in portrait. The HDMI capture connection remains fixed at its existing landscape angle and 1080p resolution.
@@ -134,10 +193,10 @@ Note: the DI refactor (`di-refactor.md`) deliberately stopped after Phase 1 (pur
 - **No camera switching** — back camera only; no front-camera flip. Zoom across the device's available focal lengths works at the backend/service layer (`CameraManager.setZoom(displayed:)`/`rampZoom(toDisplayed:rate:)`) and is wired into the live camera screen via `ZoomControlView`, docked persistently in `CameraScreen` (`camera-controls-plan.md` Phase 6).
 - **Record-format switching is now on-screen.** `CameraManager.setFormat(_:)` supports HD/4K × 24p/30p with fallback and persistence (see "Key Features"); `FormatControlsView` is reachable from a tap-to-reveal popup in `CameraScreen` (hard-blocked while recording, D6), replacing the prior "service-layer only" state. ISO/shutter speed adjustment and a STANDARD/CINE mode toggle are not yet implemented; a phased plan for all of these is in `camera-controls-plan.md` (ISO/shutter deferred to a later phase).
 - **Tap-to-focus and the AF/MF toggle are implemented and on-screen.** Tap anywhere on the live camera preview to focus there (`CameraManager.focus(at:)`, converted through `AVCaptureVideoPreviewLayer.captureDevicePointConverted(fromLayerPoint:)` so the letterboxed `.resizeAspect` preview never focuses on the wrong subject). The device then settles from a one-shot autofocus into `.locked` on its own, tracked live via KVO. `CameraManager.setAutoFocus(_:)` toggles between continuous autofocus and a frozen lock; its `FocusControlView` badge is docked persistently in `CameraScreen` (Phase 6) since focus racking stays relevant mid-take (D6). VoiceOver users get an equivalent set of discrete focus-point accessibility actions on the preview itself, since the tap gesture is unreachable while VoiceOver's touch exploration is active.
-- **Exposure/auto-exposure and EV bias are implemented and on-screen.** `CameraManager.setAutoExposure(_:)` toggles continuous auto-exposure vs. a frozen lock (independent of the focus toggle — the two are never combined, unlike PromptCam); `exposeAndMeter(at:)` metering is the point-based one-shot counterpart to tap-to-focus and shares the same tap gesture on the live preview (`Coordinator.focusAndExpose(at:)` calls both `focus(at:)` and `exposeAndMeter(at:)` with the same device point — matching the stock Camera app's combined AF/AE tap square — while their lock states remain independently toggleable); `setExposureBias(_:)`/`adjustExposureBias(by:)`/`resetExposureBias()` provide absolute, incremental, and reset EV adjustment, clamped to the device's reported bias range and tracked live via KVO. A compact AE/LOCK badge is docked persistently in `CameraScreen`; the full `ExposureControlView` (slider + tick marks + Reset) is reachable from a secondary popup opened from that badge's "adjust exposure bias" button (Phase 6).
+- **Exposure/auto-exposure and EV bias are implemented and on-screen.** Independent focus and exposure toggles remain available; landscape additionally offers combined Lock. Preview point requests run through `CameraManager.focusAndExpose(at:completion:)` on the session queue and are rejected while explicit combined lock is active. Successful requests produce brief feedback, not face tracking or focus-acquisition confirmation. EV adjustment and Reset remain available from the landscape EV panel/Settings and the existing portrait exposure panel.
 - **No external/USB microphone selection UI** — the app always plays back/records through the system's current default audio route; it cannot detect or let the user pick a specific external mic (e.g. DJI Mic, Rode), and there is no audio level metering. Note that on iOS this is an `AVAudioSession.setPreferredInput` concern, **not** an `AVCaptureDevice` one — `AVCaptureDevice.default(for: .audio)` is a single proxy device whose identity never changes. Planned as Phase 7 of `camera-controls-plan.md` (source picker + VU meters, modeled on PromptCam).
 - **No audio input metering** — there are no VU meters, so there is no way to confirm a mic is live or catch clipping before a take. Planned alongside the source picker in Phase 7 of `camera-controls-plan.md`.
-- **Bluetooth microphones are not selectable** — the audio session uses `.allowBluetoothA2DP`, which is output-only. Enabling Bluetooth *input* requires `.allowBluetooth` (HFP), which would narrowband capture to 8/16 kHz **and** steal audio output from the HDMI route. Deliberately left off; see `camera-controls-plan.md` decision D13.
+- **Bluetooth microphones are not selectable** — the audio session uses `.allowBluetoothA2DP`, which is output-only. Enabling Bluetooth _input_ requires `.allowBluetooth` (HFP), which would narrowband capture to 8/16 kHz **and** steal audio output from the HDMI route. Deliberately left off; see `camera-controls-plan.md` decision D13.
 - **`SWIFT_STRICT_CONCURRENCY` has not been reviewed/configured** — an open item from `mvp-plan.md`.
 - **App icon and display name added.** The app now ships a real icon (`Assets.xcassets/AppIcon.appiconset`) and `INFOPLIST_KEY_CFBundleDisplayName = "Cam Vue"`.
 - **iOS 27 external-display "scene accessory" path is dormant.** `ExternalDisplaySceneDelegate.swift` contains a fully written `registerSceneAccessory` implementation for the upcoming iOS 27 external-display API, wrapped in `#if false` because those symbols don't exist in the iOS 26.5 SDK this project currently builds against. The static `Info.plist` scene-manifest mechanism (used today) will stop auto-connecting the external-display scene on iOS 27+, so this block must be enabled once building against that SDK.

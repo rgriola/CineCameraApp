@@ -23,6 +23,11 @@ import CoreGraphics
 import Foundation
 
 nonisolated enum ZoomPolicy {
+    static let maximumDisplayed: CGFloat = 8
+
+    static func cappedMaximum(deviceMaximum: CGFloat, multiplier: CGFloat) -> CGFloat {
+        Swift.min(deviceMaximum, deviceFactor(fromDisplayed: maximumDisplayed, multiplier: multiplier))
+    }
 
     /// Device space → display space.
     ///
@@ -72,6 +77,7 @@ nonisolated enum ZoomPolicy {
         let anchor1x = deviceFactor(fromDisplayed: 1, multiplier: multiplier)
         let candidates = ([minFactor, anchor1x] + switchOverFactors)
             .filter { $0.isFinite && $0 > 0 && $0 >= minFactor && $0 <= maxFactor }
+            .filter { displayed(fromDeviceFactor: $0, multiplier: multiplier) <= maximumDisplayed }
             .sorted()
 
         return candidates.reduce(into: [CGFloat]()) { stops, factor in
@@ -130,6 +136,7 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
     var isFocusSupported: Bool
     var isExposureLocked: Bool
     var isExposureSupported: Bool
+    var combinedLockRequested = false
 
     /// Pre-device defaults. A degenerate `1...1` zoom range and `0...0` bias
     /// range mean "nothing selectable yet", which is what the UI should show
@@ -169,7 +176,7 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
         isExposureSupported: Bool
     ) -> CameraControlSnapshot {
         let lowerDisplayed = ZoomPolicy.displayed(fromDeviceFactor: minZoomFactor, multiplier: displayMultiplier)
-        let upperDisplayed = ZoomPolicy.displayed(fromDeviceFactor: maxZoomFactor, multiplier: displayMultiplier)
+        let upperDisplayed = min(ZoomPolicy.maximumDisplayed, ZoomPolicy.displayed(fromDeviceFactor: maxZoomFactor, multiplier: displayMultiplier))
         let currentDisplayed = ZoomPolicy.displayed(fromDeviceFactor: zoomFactor, multiplier: displayMultiplier)
 
         let zoomRange = safeRange(lower: lowerDisplayed, upper: upperDisplayed, fallback: 1)
@@ -194,6 +201,12 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
         )
     }
 
+    var isCombinedLocked: Bool { combinedLockRequested && isFocusLocked && isExposureLocked }
+    var supportsCombinedLock: Bool { isFocusSupported && isExposureSupported }
+    var allowsPointActions: Bool {
+        !combinedLockRequested && (isFocusSupported || isExposureSupported)
+    }
+
     /// `ClosedRange` traps when `lower > upper`, and propagates NaN silently.
     /// Device-reported bounds are not worth trusting with a crash.
     private static func safeRange<T: BinaryFloatingPoint>(lower: T, upper: T, fallback: T) -> ClosedRange<T> {
@@ -214,6 +227,12 @@ nonisolated struct CameraControlSnapshot: Equatable, Sendable {
 /// conversion is defensively re-validated here before it reaches
 /// `AVCaptureDevice`.
 nonisolated enum FocusPolicy {
+    static func acceptsPreviewPoint(_ point: CGPoint, videoRect: CGRect) -> Bool {
+        point.x.isFinite && point.y.isFinite
+            && !videoRect.isNull && !videoRect.isInfinite && !videoRect.isEmpty
+            && videoRect.contains(point)
+    }
+
     /// Clamps a tap-to-focus point into the unit square `focusPointOfInterest`
     /// documents: `(0,0)` top-left, `(1,1)` bottom-right. `captureDevicePointConverted(fromLayerPoint:)`
     /// is documented to already return a point in this range for taps inside

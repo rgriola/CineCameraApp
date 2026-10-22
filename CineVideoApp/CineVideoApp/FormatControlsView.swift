@@ -53,8 +53,10 @@ struct FormatControlsView: View {
                     .overlay(Capsule().fill(Color.black.opacity(0.35)))
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Current recording format")
-            .accessibilityValue("\(activeResolution.rawValue), \(activeFrameRate.displayLabel)")
+            .accessibilityInfo(
+                label: Text("Current recording format"),
+                value: Text("\(activeResolution.rawValue), \(activeFrameRate.displayLabel)")
+            )
     }
 
     /// A toggle button, not a picker — only two states exist, and the user
@@ -69,12 +71,12 @@ struct FormatControlsView: View {
                 .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .accessibilityLabel("Recording resolution")
-        .accessibilityValue(activeResolution.rawValue)
-        .accessibilityHint(
-            cameraManager.isOrientationLocked
+        .accessibilityInfo(
+            label: Text("Recording resolution"),
+            value: Text(activeResolution.rawValue),
+            hint: Text(cameraManager.isOrientationLocked
                 ? "Resolution can't be changed until recording finishes."
-                : "Switches to \(next.rawValue) recording"
+                : "Switches to \(next.rawValue) recording")
         )
     }
 
@@ -95,11 +97,11 @@ struct FormatControlsView: View {
         // falls under the minimum tap target; `minWidth` (not a fixed width)
         // avoids clipping "24p"/"30p" at larger Dynamic Type sizes.
         .frame(minWidth: 120, minHeight: 44)
-        .accessibilityLabel("Frame rate")
-        .accessibilityHint(
-            cameraManager.isOrientationLocked
+        .accessibilityInfo(
+            label: Text("Frame rate"),
+            hint: Text(cameraManager.isOrientationLocked
                 ? "Frame rate can't be changed until recording finishes."
-                : "Selects the recording frame rate."
+                : "Selects the recording frame rate.")
         )
     }
 }

@@ -46,6 +46,14 @@ nonisolated struct CineFormat: Equatable, Hashable, Codable, Sendable {
 
     static let `default` = CineFormat(resolution: .hd1080, frameRate: .fps30)
 
+    var cyclingResolution: CineFormat {
+        CineFormat(resolution: resolution == .hd1080 ? .uhd4K : .hd1080, frameRate: frameRate)
+    }
+
+    var cyclingFrameRate: CineFormat {
+        CineFormat(resolution: resolution, frameRate: frameRate == .fps24 ? .fps30 : .fps24)
+    }
+
     /// Maps a device's real active dimensions and frame rate back onto a
     /// modeled format, or `nil` when the device is running something this app
     /// doesn't model. Used to report what the hardware *actually* settled on

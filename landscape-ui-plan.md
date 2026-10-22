@@ -1,8 +1,69 @@
 # Landscape Camera UI Rework
 
-Status: approved design direction; implementation not started.
+Status: landscape implementation available for device testing; portrait Phase 5
+is deferred until landscape approval.
 Date: 2026-10-20
 Target branch: `feature/ui-update-one`
+
+Current rail revision: four fixed items, top to bottom: Photos (unavailable),
+Settings, Zoom, Focus. Settings is no longer over the preview. The combined
+Lock entry is temporarily hidden; its capture-service implementation is
+retained. The rail is centered in the fitted preview's right pillarbox when
+its full width plus 6-point clearance on each side fits. Otherwise it falls
+back to the safe trailing edge, overlapping the image rather than cropping
+the preview or shrinking touch targets. Vertical bounds respect the top and
+bottom safe insets; the rail's end spacers keep its items away from corners.
+
+## Implementation progress
+
+- Pre-merge cleanup: remove the remaining portrait zoom preset row/menu and
+  its UI-only configuration. Both orientations now use continuous sliders.
+  Existing capture-service lens metadata and zoom policy tests are retained.
+  Latest device-tuning overrides: landscape Zoom and EV sliders start hidden;
+  Reset and AE entries in the exposure view are temporarily commented out.
+
+- Landscape EV revision: the quick-strip EV button toggles horizontal inline
+  exposure controls immediately above the strip (visible initially), instead
+  of opening a modal panel. Reuse the compact EV readout/slider, Reset, and
+  independent AE toggle; retain device bounds and recording-time adjustment.
+  Settings and portrait exposure remain unchanged.
+
+- Landscape zoom revision: replace the adjacent preset scale with a native
+  vertical slider in the same bounds, with an upright current-zoom readout.
+  Zoom toggles its visibility (visible initially) instead of opening a panel.
+  Up increases zoom; supported bounds, the 8x cap, no-scroll behavior, and
+  recording-time adjustment remain unchanged. Portrait zoom is unchanged.
+
+- Phases 1-3: landscape chrome, symbol catalog, real format/EV/zoom controls,
+  combined lock, monotonic recording timer, and unavailable future affordances
+  implemented.
+- Phase 4: simulator/device-target builds and focused policy/regression tests
+  pass. Hosted landscape render checks cover standard and accessibility text
+  sizes. Concurrency/accessibility review findings have been addressed.
+- User hardware approval is still required: live-camera control responses,
+  combined-lock behavior, HDMI audio/video, recording, safe-area placement,
+  and the acceptance checklist below are not verified by a simulator render.
+- Phase 5: not started. Existing portrait composition remains in place.
+- Screenshot-driven landscape refinement: compact 64-point tool rail, single
+  translucent format strip, smaller Record and Settings controls, and a visible
+  device-supported magnification scale. Controls anchor to the fitted image
+  and safe bounds without resizing the preview. Controls never scroll:
+  narrow/large-text strips use labeled-accessibility icon buttons, zoom presets
+  move into a native menu when needed, and the scale uses fixed zoom-step
+  buttons when its preset ticks cannot fit. Unavailable features remain in
+  Settings when omitted from the compact strip.
+  Visual acceptance on the phone remains pending.
+- Landscape quick controls anchor directly to the screen's safe bottom edge,
+  without the image-control inset; the 44-point strip stays above the home
+  indicator and centered below the image controls.
+- Landscape chrome measures the full container before applying safe-area
+  insets once. The rail uses the actual right pillarbox where it fits, with
+  safe-trailing placement as a fallback. The zoom scale is positioned
+  immediately beside the calculated rail, without device-specific offsets.
+
+The combined lock tracks explicit user intent as well as confirmed device
+modes. One-shot tap focus/metering can settle into locked device modes without
+engaging the combined Lock button; this must not disable subsequent point taps.
 
 ## Purpose and references
 
@@ -206,7 +267,7 @@ shrinking the landscape interface.
   Lock on the right. Keep positions stable during recording transitions.
 - Bottom strip: HD/4K, 24p/30p, and signed EV in the same order as landscape.
   Put disabled ISO/Shutter slots in a secondary row where needed. Allow
-  wrapping or accessible scrolling at large text sizes rather than shrinking
+  reflow or secondary-option panels at large text sizes rather than shrinking
   hit targets.
 - Audio: compact disabled microphone/audio affordance for now. When audio
   Phase 7 supplies real measurements, use a horizontal meter rather than
@@ -225,7 +286,8 @@ Portrait acceptance checks:
 - [ ] Preview remains uncropped at HD/4K, including with panels open.
 - [ ] Zoom, format, EV, Focus, and combined Lock behave identically to landscape.
 - [ ] Record/Stop placement stays stable across startup, recording, and stopping.
-- [ ] Large text wraps/scrolls without overlapping controls or reducing hit targets.
+- [ ] Large text uses fixed alternate layouts without scrolling controls,
+  overlapping controls, or reducing hit targets.
 - [ ] VoiceOver order and panel focus follow the portrait arrangement.
 - [ ] Idle rotation preserves settings and confirmed device state between layouts.
 - [ ] Portrait recording stays portrait; HDMI stays horizontal and UI-free.

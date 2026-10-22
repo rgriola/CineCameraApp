@@ -40,7 +40,10 @@ struct CameraPreview: UIViewRepresentable {
         // discrete focus-and-expose points as accessibility custom actions
         // instead (a11y review finding — the AF/MF toggle alone can't
         // express "focus *here*").
-        view.onAccessibilityFocus = context.coordinator.focusAndExpose(at:)
+        view.onAccessibilityFocus = { [weak view, weak coordinator = context.coordinator] point in
+            guard let view else { return }
+            coordinator?.requestPoint(point, in: view)
+        }
         return view
     }
 
@@ -55,6 +58,12 @@ struct CameraPreview: UIViewRepresentable {
             context.coordinator.attach(to: uiView, device: device)
         }
         context.coordinator.updateLockState(isLocked: cameraManager.isOrientationLocked)
+        uiView.pointActionsAllowed = cameraManager.controls.allowsPointActions
+        uiView.accessibilityHint = cameraManager.controls.combinedLockRequested
+            ? "Focus and exposure are locked. Unlock them to select a point."
+            : cameraManager.controls.allowsPointActions
+                ? "Offers actions to focus and expose at a specific point in frame."
+                : "Point selection is unavailable."
     }
 
     func makeCoordinator() -> Coordinator {
@@ -93,12 +102,11 @@ struct CameraPreview: UIViewRepresentable {
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended, let view = gesture.view as? PreviewUIView else { return }
             let layerPoint = gesture.location(in: view)
-            view.showFocusReticle(at: layerPoint)
             guard let devicePoint = view.devicePoint(for: layerPoint) else {
-                Logger.orientation.debug("Tap-to-focus skipped: no previewLayer to convert the tap point yet.")
+                Logger.orientation.debug("Tap-to-focus skipped: point is outside visible video or preview is not ready.")
                 return
             }
-            focusAndExpose(at: devicePoint)
+            requestPoint(devicePoint, in: view)
         }
 
         /// Shared by `handleTap` and `PreviewUIView.onAccessibilityFocus`
@@ -111,9 +119,12 @@ struct CameraPreview: UIViewRepresentable {
         /// and AE/locked toggle badges remain independently lockable
         /// afterward; only the tap *target point* is shared between the two,
         /// never their lock state.
-        func focusAndExpose(at devicePoint: CGPoint) {
-            cameraManager?.focus(at: devicePoint)
-            cameraManager?.exposeAndMeter(at: devicePoint)
+        func requestPoint(_ devicePoint: CGPoint, in view: PreviewUIView) {
+            cameraManager?.focusAndExpose(at: devicePoint) { [weak view] accepted in
+                guard accepted, let view,
+                      let point = view.previewLayer?.layerPointConverted(fromCaptureDevicePoint: devicePoint) else { return }
+                view.showFocusReticle(at: point)
+            }
         }
 
         func attach(to view: PreviewUIView, device: AVCaptureDevice) {
@@ -190,6 +201,10 @@ struct CameraPreview: UIViewRepresentable {
         /// to route into `Coordinator.focusAndExpose(at:)`, which drives
         /// both.
         var onAccessibilityFocus: ((CGPoint) -> Void)?
+        var pointActionsAllowed = true {
+            didSet { updatePointActions() }
+        }
+        private var reticleDismissal: DispatchWorkItem?
 
         /// Discrete, nameable focus-and-expose targets exposed as VoiceOver
         /// custom actions, since a direct-manipulation tap gesture is
@@ -245,15 +260,20 @@ struct CameraPreview: UIViewRepresentable {
             // Live video, not a static image — `.updatesFrequently` is the
             // trait Apple documents for content that changes continuously.
             accessibilityTraits = .updatesFrequently
+            updatePointActions()
+        }
+
+        private func updatePointActions() {
+            guard pointActionsAllowed else {
+                accessibilityCustomActions = []
+                return
+            }
             accessibilityCustomActions = Self.focusAccessibilityTargets.map { target in
                 UIAccessibilityCustomAction(name: target.name) { [weak self] _ in
-                    guard let self else { return false }
+                    guard let self, self.pointActionsAllowed else { return false }
                     // Mirror the tap gesture's visual feedback for sighted
                     // VoiceOver users too, via the inverse of
                     // `devicePoint(for:)`.
-                    if let layerPoint = self.previewLayer?.layerPointConverted(fromCaptureDevicePoint: target.devicePoint) {
-                        self.showFocusReticle(at: layerPoint)
-                    }
                     self.onAccessibilityFocus?(target.devicePoint)
                     return true
                 }
@@ -291,7 +311,12 @@ struct CameraPreview: UIViewRepresentable {
         /// wrong subject — `previewLayer` is the only thing that knows its
         /// own actual visible video rect, so the conversion must happen here.
         func devicePoint(for layerPoint: CGPoint) -> CGPoint? {
-            previewLayer?.captureDevicePointConverted(fromLayerPoint: layerPoint)
+            guard let previewLayer, previewLayer.connection?.isActive == true else { return nil }
+            let videoRect = previewLayer.layerRectConverted(
+                fromMetadataOutputRect: CGRect(x: 0, y: 0, width: 1, height: 1)
+            ).intersection(previewLayer.bounds)
+            guard FocusPolicy.acceptsPreviewPoint(layerPoint, videoRect: videoRect) else { return nil }
+            return previewLayer.captureDevicePointConverted(fromLayerPoint: layerPoint)
         }
 
         /// Brief, transient visual feedback at a tap-to-focus point —
@@ -300,6 +325,17 @@ struct CameraPreview: UIViewRepresentable {
         /// skipped outright, since the reticle still needs to disappear
         /// afterward either way.
         func showFocusReticle(at layerPoint: CGPoint) {
+            reticleDismissal?.cancel()
+            if bounds.width > bounds.height {
+                focusReticleView.layer.removeAllAnimations()
+                focusReticleView.transform = .identity
+                focusReticleView.center = layerPoint
+                focusReticleView.alpha = 1
+                let dismissal = DispatchWorkItem { [weak self] in self?.focusReticleView.alpha = 0 }
+                reticleDismissal = dismissal
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: dismissal)
+                return
+            }
             focusReticleView.center = layerPoint
             focusReticleView.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
             focusReticleView.alpha = 0

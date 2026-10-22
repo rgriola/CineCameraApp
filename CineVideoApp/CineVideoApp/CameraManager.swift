@@ -108,6 +108,7 @@ private final class CameraSession: NSObject, @unchecked Sendable {
     // updates are ignored — this is the safety net that freezes camera
     // preview, recording, and HDMI output orientation during capture.
     nonisolated(unsafe) var isOrientationLocked = false
+    nonisolated(unsafe) var combinedLockRequested = false
 
     // Callbacks that push state back to the main actor.
     nonisolated(unsafe) var onRecordingStateChange: (@Sendable (Bool) -> Void)?
@@ -297,6 +298,7 @@ final class CameraManager: NSObject {
     private(set) var recordingPhase: RecordingPhase = .idle
     var isRecording: Bool { recordingPhase == .recording || recordingPhase == .stopping }
     var isOrientationLocked: Bool { recordingPhase.locksOrientation }
+    private(set) var recordingStartedAt: ContinuousClock.Instant?
     // Resolve the actual hosting scene at record-button time, without retaining
     // the view or relying on connected-scene/key-window ordering (HDMI is key).
     @ObservationIgnored weak var cameraPreviewView: UIView?
@@ -394,13 +396,16 @@ final class CameraManager: NSObject {
 
         // Callbacks arrive from sessionQueue; hop to main to mutate @Observable state.
         cs.onRecordingStateChange = { [weak self] recording in
+            let eventTime = ContinuousClock.now
             DispatchQueue.main.async {
                 guard let self else { return }
                 if recording {
+                    self.recordingStartedAt = eventTime
                     if !self.recordingPhase.didStart() {
                         Logger.recording.error("Unexpected recording-start callback.")
                     }
                 } else {
+                    self.recordingStartedAt = nil
                     self.recordingPhase.finish()
                     OrientationLock.unlock()
                     self.onOrientationLockChange?(false)
@@ -432,6 +437,60 @@ final class CameraManager: NSObject {
         await resolveMicrophonePermission()
         await resolvePhotoLibraryPermission()
         startSessionIfAuthorized()
+    }
+
+    func setCombinedLock(_ locked: Bool) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard let device = cs.videoDevice else {
+                Logger.controls.error("Combined lock rejected: camera unavailable.")
+                cs.onSaveError?("The camera isn't ready to change focus and exposure.")
+                return
+            }
+            let focus: AVCaptureDevice.FocusMode = locked ? .locked : .continuousAutoFocus
+            let exposure: AVCaptureDevice.ExposureMode = locked ? .locked : .continuousAutoExposure
+            guard device.isFocusModeSupported(focus), device.isExposureModeSupported(exposure) else {
+                Logger.controls.error("Combined focus/exposure mode unsupported.")
+                cs.onSaveError?("This camera doesn't support combined focus and exposure locking.")
+                self.publishControlSnapshot(for: device)
+                return
+            }
+            do {
+                try device.lockForConfiguration()
+                device.focusMode = focus
+                device.exposureMode = exposure
+                cs.combinedLockRequested = locked
+                device.unlockForConfiguration()
+                self.publishControlSnapshot(for: device)
+            } catch {
+                Logger.controls.error("Combined lock failed: \(error.localizedDescription, privacy: .public)")
+                cs.onSaveError?("Couldn't change focus and exposure lock: \(error.localizedDescription)")
+                self.publishControlSnapshot(for: device)
+            }
+        }
+    }
+
+    func focusAndExpose(
+        at point: CGPoint,
+        completion: @escaping @MainActor @Sendable (Bool) -> Void
+    ) {
+        let cs = self.cs
+        sessionQueue.async { [weak self] in
+            guard let self, let device = cs.videoDevice else {
+                Logger.controls.notice("Point request rejected: camera unavailable.")
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            guard !cs.combinedLockRequested else {
+                Logger.controls.notice("Point request ignored: combined lock is active.")
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            let focused = self.performFocus(device: device, at: point)
+            let exposed = self.performExposeAndMeter(device: device, at: point)
+            DispatchQueue.main.async { completion(focused || exposed) }
+        }
     }
 
     func toggleRecording() {
@@ -542,6 +601,10 @@ final class CameraManager: NSObject {
         let cs = self.cs
         sessionQueue.async { [weak self] in
             guard let self, let device = cs.videoDevice else { return }
+            guard !cs.combinedLockRequested else {
+                Logger.controls.notice("Focus point ignored: focus and exposure are locked.")
+                return
+            }
             self.performFocus(device: device, at: devicePoint)
         }
     }
@@ -558,6 +621,7 @@ final class CameraManager: NSObject {
         sessionQueue.async { [weak self] in
             guard let self, let device = cs.videoDevice else { return }
             self.performSetAutoFocus(enabled, device: device)
+            self.publishControlSnapshot(for: device)
         }
     }
 
@@ -571,6 +635,10 @@ final class CameraManager: NSObject {
         let cs = self.cs
         sessionQueue.async { [weak self] in
             guard let self, let device = cs.videoDevice else { return }
+            guard !cs.combinedLockRequested else {
+                Logger.controls.notice("Exposure point ignored: focus and exposure are locked.")
+                return
+            }
             self.performExposeAndMeter(device: device, at: devicePoint)
         }
     }
@@ -586,6 +654,7 @@ final class CameraManager: NSObject {
         sessionQueue.async { [weak self] in
             guard let self, let device = cs.videoDevice else { return }
             self.performSetAutoExposure(enabled, device: device)
+            self.publishControlSnapshot(for: device)
         }
     }
 
@@ -728,7 +797,7 @@ final class CameraManager: NSObject {
 
         guard !cs.isConfigured else {
             if !cs.session.isRunning { cs.session.startRunning() }
-            let snapshot = cs.videoDevice.map(Self.makeControlSnapshot(for:))
+            let snapshot = cs.videoDevice.map { makeControlSnapshot(for: $0) }
             let appliedFormat = cs.videoDevice.flatMap(Self.currentCineFormat(of:))
             DispatchQueue.main.async { [weak self] in
                 self?.videoDevice = cs.videoDevice
@@ -838,7 +907,7 @@ final class CameraManager: NSObject {
 
         // Snapshotted here, on sessionQueue, after the format and zoom anchor
         // have settled — the available zoom range is format-dependent.
-        let snapshot = Self.makeControlSnapshot(for: videoDevice)
+        let snapshot = makeControlSnapshot(for: videoDevice)
         let appliedFormat = Self.currentCineFormat(of: videoDevice)
 
         DispatchQueue.main.async { [weak self] in
@@ -899,7 +968,7 @@ final class CameraManager: NSObject {
         // `setupSession`'s note on why `activeFormat` is deferred to commit.
         reapplyFormatDependentState(to: device, cs: cs, desiredZoomDisplayed: desiredZoomDisplayed)
 
-        let snapshot = Self.makeControlSnapshot(for: device)
+        let snapshot = makeControlSnapshot(for: device)
         let appliedFormat = Self.currentCineFormat(of: device)
 
         DispatchQueue.main.async { [weak self] in
@@ -974,7 +1043,7 @@ final class CameraManager: NSObject {
         let deviceFactor = ZoomPolicy.clamp(
             ZoomPolicy.deviceFactor(fromDisplayed: displayed, multiplier: device.displayVideoZoomFactorMultiplier),
             min: device.minAvailableVideoZoomFactor,
-            max: device.maxAvailableVideoZoomFactor
+            max: ZoomPolicy.cappedMaximum(deviceMaximum: device.maxAvailableVideoZoomFactor, multiplier: device.displayVideoZoomFactorMultiplier)
         )
         do {
             try device.lockForConfiguration()
@@ -996,7 +1065,7 @@ final class CameraManager: NSObject {
         let deviceFactor = ZoomPolicy.clamp(
             ZoomPolicy.deviceFactor(fromDisplayed: displayed, multiplier: device.displayVideoZoomFactorMultiplier),
             min: device.minAvailableVideoZoomFactor,
-            max: device.maxAvailableVideoZoomFactor
+            max: ZoomPolicy.cappedMaximum(deviceMaximum: device.maxAvailableVideoZoomFactor, multiplier: device.displayVideoZoomFactorMultiplier)
         )
         do {
             try device.lockForConfiguration()
@@ -1042,10 +1111,11 @@ final class CameraManager: NSObject {
     /// Tap-to-focus. `focusPointOfInterest` must be set *before* `focusMode`
     /// for the new point to take effect — documented on `AVCaptureDevice`:
     /// setting the point alone doesn't initiate a focus operation.
-    nonisolated private func performFocus(device: AVCaptureDevice, at devicePoint: CGPoint) {
+    @discardableResult
+    nonisolated private func performFocus(device: AVCaptureDevice, at devicePoint: CGPoint) -> Bool {
         guard device.isFocusPointOfInterestSupported, device.isFocusModeSupported(.autoFocus) else {
             Logger.controls.notice("Tap-to-focus skipped: unsupported on this device.")
-            return
+            return false
         }
         let clamped = FocusPolicy.clampDevicePoint(devicePoint)
         do {
@@ -1056,8 +1126,10 @@ final class CameraManager: NSObject {
             Logger.controls.info(
                 "Tap-to-focus at device point (\(clamped.x, privacy: .public), \(clamped.y, privacy: .public))."
             )
+            return true
         } catch {
             Logger.controls.error("Failed to lock device for tap-to-focus: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
@@ -1099,10 +1171,11 @@ final class CameraManager: NSObject {
     /// `exposureMode` for the new point to take effect — documented on
     /// `AVCaptureDevice`, symmetric with `performFocus`'s point-before-mode
     /// requirement.
-    nonisolated private func performExposeAndMeter(device: AVCaptureDevice, at devicePoint: CGPoint) {
+    @discardableResult
+    nonisolated private func performExposeAndMeter(device: AVCaptureDevice, at devicePoint: CGPoint) -> Bool {
         guard device.isExposurePointOfInterestSupported, device.isExposureModeSupported(.autoExpose) else {
             Logger.controls.notice("Tap-to-expose skipped: unsupported on this device.")
-            return
+            return false
         }
         let clamped = ExposurePolicy.clampDevicePoint(devicePoint)
         do {
@@ -1113,8 +1186,10 @@ final class CameraManager: NSObject {
             Logger.controls.info(
                 "Tap-to-expose at device point (\(clamped.x, privacy: .public), \(clamped.y, privacy: .public))."
             )
+            return true
         } catch {
             Logger.controls.error("Failed to lock device for tap-to-expose: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
@@ -1190,7 +1265,7 @@ final class CameraManager: NSObject {
     /// `activeFormat`/persistence — `setupSession`/`applyFormat` publish
     /// those together and build their own snapshot inline.
     nonisolated private func publishControlSnapshot(for device: AVCaptureDevice) {
-        let snapshot = Self.makeControlSnapshot(for: device)
+        let snapshot = makeControlSnapshot(for: device)
         DispatchQueue.main.async { [weak self] in
             self?.controls = snapshot
         }
@@ -1198,8 +1273,8 @@ final class CameraManager: NSObject {
 
     /// Reads the device's current control-related values into a `Sendable`
     /// snapshot. Called on `sessionQueue`, where the device is safe to read.
-    nonisolated private static func makeControlSnapshot(for device: AVCaptureDevice) -> CameraControlSnapshot {
-        CameraControlSnapshot.make(
+    nonisolated private func makeControlSnapshot(for device: AVCaptureDevice) -> CameraControlSnapshot {
+        var snapshot = CameraControlSnapshot.make(
             zoomFactor: device.videoZoomFactor,
             minZoomFactor: device.minAvailableVideoZoomFactor,
             maxZoomFactor: device.maxAvailableVideoZoomFactor,
@@ -1214,6 +1289,11 @@ final class CameraManager: NSObject {
             isExposureLocked: device.exposureMode == .locked,
             isExposureSupported: device.isExposureModeSupported(.continuousAutoExposure) && device.isExposureModeSupported(.locked)
         )
+        if !snapshot.isFocusLocked || !snapshot.isExposureLocked {
+            cs.combinedLockRequested = false
+        }
+        snapshot.combinedLockRequested = cs.combinedLockRequested
+        return snapshot
     }
 
     /// Maps a device's real `AVCaptureDevice.Format` list into the pure value
