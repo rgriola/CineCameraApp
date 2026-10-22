@@ -16,17 +16,19 @@ import SwiftUI
 
 struct ExposureControlView: View {
     let cameraManager: CameraManager
+    var compact = false
 
     private var snapshot: CameraControlSnapshot { cameraManager.controls }
 
     var body: some View {
         VStack(spacing: 8) {
             evSlider
-            HStack(spacing: 8) {
-                resetButton
-                Spacer()
-                aeBadge
+          /*  HStack(spacing: 8) {
+            //    resetButton
+            //    Spacer()
+            //    aeBadge
             }
+            */
         }
     }
 
@@ -56,14 +58,19 @@ struct ExposureControlView: View {
                     .font(.caption.monospacedDigit())
                     .accessibilityHidden(true) // already surfaced via the slider's accessibilityValue
             }
-            Slider(
-                value: Binding(
+            Group {
+                let value = Binding(
                     get: { Double(snapshot.exposureBias) },
                     set: { cameraManager.setExposureBias(Float($0)) }
-                ),
-                in: Double(range.lowerBound)...Double(range.upperBound),
-                step: 0.1
-            )
+                )
+                let bounds = Double(range.lowerBound)...Double(range.upperBound)
+                if isUnavailable {
+                    // A stepped slider traps when its range is narrower than one step.
+                    Slider(value: value, in: bounds)
+                } else {
+                    Slider(value: value, in: bounds, step: min(0.1, bounds.upperBound - bounds.lowerBound))
+                }
+            }
             .frame(minHeight: 44)
             .disabled(isUnavailable)
             // "Exposure bias" (not just "Exposure") — the AE/lock badge
@@ -71,8 +78,10 @@ struct ExposureControlView: View {
             // and Voice Control need distinct names for two different
             // controls in the same view, or both read/target ambiguously
             // (a11y review finding).
-            .accessibilityLabel("Exposure bias")
-            .accessibilityValue(isUnavailable ? "Unavailable" : accessibleEVReadoutText)
+            .accessibilityInfo(
+                label: Text("Exposure bias"),
+                value: Text(isUnavailable ? "Unavailable" : accessibleEVReadoutText)
+            )
             // The system's own slider adjustment gesture already maps to
             // `setExposureBias`'s Binding above; this custom action instead
             // gives VoiceOver a 0.1 EV step size independent of the slider's
@@ -89,7 +98,9 @@ struct ExposureControlView: View {
                     break
                 }
             }
-            tickMarks(range: range)
+            if !compact {
+                tickMarks(range: range)
+            }
         }
     }
 
@@ -112,13 +123,20 @@ struct ExposureControlView: View {
         Button {
             cameraManager.resetExposureBias()
         } label: {
-            Label("Reset", systemImage: "arrow.counterclockwise")
-                .font(.caption)
-                .frame(minWidth: 44, minHeight: 44)
+            Group {
+                if compact {
+                    Image(systemName: CameraSymbols.reset).font(.system(size: 20))
+                } else {
+                    Label("Reset", systemImage: CameraSymbols.reset).font(.caption)
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .accessibilityLabel("Reset exposure")
-        .accessibilityHint("Returns exposure bias to neutral, 0 EV.")
+        .accessibilityInfo(
+            label: Text("Reset exposure"),
+            hint: Text("Returns exposure bias to neutral, 0 EV.")
+        )
     }
 
     // MARK: - AE / locked badge
@@ -131,9 +149,15 @@ struct ExposureControlView: View {
             // Toggle: locked -> re-enable auto; auto -> lock in place.
             cameraManager.setAutoExposure(isLocked)
         } label: {
-            Text(badgeLabel)
-                .font(.caption.weight(.semibold))
-                .frame(minWidth: 44, minHeight: 44)
+            Group {
+                if compact {
+                    Image(systemName: isLocked ? CameraSymbols.locked : CameraSymbols.exposure)
+                        .font(.system(size: 20))
+                } else {
+                    Text(badgeLabel).font(.caption.weight(.semibold))
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.bordered)
         .tint(badgeTintColor)
@@ -148,9 +172,11 @@ struct ExposureControlView: View {
         // slider's "Exposure bias" label above; two controls in the same
         // view sharing one accessible name was ambiguous for both VoiceOver
         // and Voice Control (a11y review finding).
-        .accessibilityLabel("Exposure mode")
-        .accessibilityValue(badgeAccessibilityValue)
-        .accessibilityHint(badgeAccessibilityHint)
+        .accessibilityInfo(
+            label: Text("Exposure mode"),
+            value: Text(badgeAccessibilityValue),
+            hint: Text(badgeAccessibilityHint)
+        )
     }
 
     /// Distinct wording per state, not just the tint color — mirrors

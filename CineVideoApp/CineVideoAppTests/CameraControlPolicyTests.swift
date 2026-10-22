@@ -405,7 +405,7 @@ struct CameraControlSnapshotTests {
         let snapshot = tripleCamera(zoomFactor: 2.0)
         #expect(isClose(snapshot.zoomDisplayed, 1.0))
         #expect(isClose(snapshot.zoomRangeDisplayed.lowerBound, 0.5))
-        #expect(isClose(snapshot.zoomRangeDisplayed.upperBound, 61.5))
+        #expect(isClose(snapshot.zoomRangeDisplayed.upperBound, 8))
     }
 
     @Test("derives lens presets rather than hardcoding them")

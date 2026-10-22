@@ -15,6 +15,7 @@ import SwiftUI
 
 struct FocusControlView: View {
     let cameraManager: CameraManager
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var snapshot: CameraControlSnapshot { cameraManager.controls }
     private var isLocked: Bool { snapshot.isFocusLocked }
@@ -25,9 +26,15 @@ struct FocusControlView: View {
             // Toggle: locked -> re-enable auto; auto -> lock in place.
             cameraManager.setAutoFocus(isLocked)
         } label: {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .frame(minWidth: 44, minHeight: 44)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    Image(systemName: isLocked ? CameraSymbols.locked : CameraSymbols.focus)
+                        .font(.system(size: 20))
+                } else {
+                    Text(label).font(.caption.weight(.semibold))
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.bordered)
         .tint(tintColor)
@@ -44,9 +51,11 @@ struct FocusControlView: View {
         // Contrast (a11y review finding). The "N/A" text plus the system's
         // own disabled treatment is sufficient.
         .disabled(!isSupported)
-        .accessibilityLabel("Focus")
-        .accessibilityValue(accessibilityValue)
-        .accessibilityHint(accessibilityHint)
+        .accessibilityInfo(
+            label: Text("Focus"),
+            value: Text(accessibilityValue),
+            hint: Text(accessibilityHint)
+        )
     }
 
     /// Distinct wording per state, not just the tint color — "N/A" instead

@@ -13,6 +13,59 @@
 import SwiftUI
 
 enum CameraLayout {
+    struct LandscapeChrome {
+        let imageControls: CGRect
+        let rail: CGRect
+        let quickControls: CGRect
+        let zoomScale: CGRect
+    }
+
+    static func landscapeChrome(
+        containerSize: CGSize,
+        safeAreaInsets: EdgeInsets,
+        accessibilitySize: Bool
+    ) -> LandscapeChrome {
+        let safe = CGRect(
+            x: safeAreaInsets.leading,
+            y: safeAreaInsets.top,
+            width: max(0, containerSize.width - safeAreaInsets.leading - safeAreaInsets.trailing),
+            height: max(0, containerSize.height - safeAreaInsets.top - safeAreaInsets.bottom)
+        )
+        let railWidth: CGFloat = accessibilitySize ? 88 : 64
+        let image = previewFrame(containerSize: containerSize, videoDimensions: (1920, 1080)).videoRect
+        let rightMarginWidth = max(0, containerSize.width - image.maxX)
+        // Pillarbox placement uses the physical margin, not the horizontal safe-area boundary.
+        // Leave edge clearance; otherwise retain full-size controls over the safe image edge.
+        let railX = rightMarginWidth >= railWidth + 12
+            ? image.maxX + (rightMarginWidth - railWidth) / 2
+            : safe.maxX - railWidth
+        let rail = CGRect(x: railX, y: safe.minY,
+                          width: railWidth, height: max(0, safe.height))
+        let left = max(image.minX + 6, safe.minX)
+        let right = min(image.maxX - 6, rail.minX - 6)
+        let top = max(image.minY + 6, safe.minY)
+        let bottom = min(image.maxY - 6, safe.maxY)
+        let controlsWidth = max(0, right - left)
+        let stripWidth = controlsWidth * 0.68
+        let zoomWidth: CGFloat = accessibilitySize ? 76 : 48
+        return LandscapeChrome(
+            imageControls: CGRect(x: left, y: top,
+                                  width: controlsWidth, height: max(0, bottom - top)),
+            rail: rail,
+            quickControls: CGRect(
+                x: left + (controlsWidth - stripWidth) / 2,
+                y: containerSize.height - safeAreaInsets.bottom - 44,
+                width: stripWidth,
+                height: 44
+            ),
+            zoomScale: CGRect(
+                x: rail.minX - 6 - zoomWidth,
+                y: safe.minY + 6,
+                width: zoomWidth,
+                height: max(92, safe.height - 130)
+            )
+        )
+    }
 
     /// Which pair of edges the black bars fall on for a given container:
     /// `.vertical` means the bars stack top/bottom (the container is
@@ -142,8 +195,8 @@ enum CameraLayout {
 
     enum Chrome {
         /// Spacing between docked controls within a bar.
-        static let dockSpacing: CGFloat = 16
+        static let dockSpacing: CGFloat = 8
         /// Padding between a bar's edge and its docked content.
-        static let dockPadding: CGFloat = 12
+        static let dockPadding: CGFloat = 6
     }
 }
